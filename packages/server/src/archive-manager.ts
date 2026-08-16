@@ -17,6 +17,10 @@ export class ArchiveManager {
     this.ensureDirectories();
   }
 
+  public getArchiveDir(): string {
+    return this.archiveDir;
+  }
+
   private ensureDirectories(): void {
     if (!fs.existsSync(this.archiveDir)) {
       fs.mkdirSync(this.archiveDir, { recursive: true });

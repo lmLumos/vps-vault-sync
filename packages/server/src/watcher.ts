@@ -137,6 +137,8 @@ export class VaultWatcher extends EventEmitter {
     const relPath = this.vaultManager.getRelativePath(filePath);
     if (this.ignoreFilter.isIgnored(relPath)) return;
 
+    this.vaultManager.recordTombstone(relPath, Date.now(), 'server').catch(() => {});
+
     const initiatingClientId = this.echoFilter.matchAndConsume(relPath);
     if (initiatingClientId) {
       return;

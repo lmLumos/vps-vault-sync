@@ -13,7 +13,8 @@ import {
   FilePutResponseMessage,
   IgnoreFilter,
   PROTOCOL_VERSION,
-  SyncEventMessage
+  SyncEventMessage,
+  VaultManifest
 } from '@vps-vault-sync/shared';
 import { ArchiveManager } from './archive-manager';
 import { EchoFilter } from './echo-filter';
@@ -803,6 +804,96 @@ describe('VPS Sync Server Integration Tests', () => {
 
         ws.on('error', reject);
       });
+    });
+  });
+
+  describe('Deletion Tombstones & Deletion Restoration Prevention (Issue 14)', () => {
+    it('should add client-deleted files to toDeleteOnServer when client mtime >= server mtime', () => {
+      const clientManifest: VaultManifest = {
+        'deleted-note.md': {
+          path: 'deleted-note.md',
+          hash: '',
+          mtime: 2000,
+          size: 0,
+          isBinary: false,
+          isDeleted: true
+        }
+      };
+      const serverManifest: VaultManifest = {
+        'deleted-note.md': {
+          path: 'deleted-note.md',
+          hash: 'abc123hash',
+          mtime: 1000,
+          size: 100,
+          isBinary: false
+        }
+      };
+
+      const diff = vaultManager.computeDiff(clientManifest, serverManifest);
+      assert.ok(diff.toDeleteOnServer.includes('deleted-note.md'));
+      assert.strictEqual(diff.toDownload.includes('deleted-note.md'), false);
+    });
+
+    it('should add server-deleted files to toDeleteOnClient when server tombstone >= client mtime', async () => {
+      await vaultManager.recordTombstone('server-deleted.md', 2000, 'server');
+
+      const clientManifest: VaultManifest = {
+        'server-deleted.md': {
+          path: 'server-deleted.md',
+          hash: 'clienthash',
+          mtime: 1000,
+          size: 100,
+          isBinary: false
+        }
+      };
+      const serverManifest: VaultManifest = {};
+
+      const diff = vaultManager.computeDiff(clientManifest, serverManifest);
+      assert.ok(diff.toDeleteOnClient.includes('server-deleted.md'));
+      assert.strictEqual(diff.toUpload.includes('server-deleted.md'), false);
+    });
+
+    it('should add to toDeleteOnServer when server has tombstone for file missing on client', async () => {
+      await vaultManager.recordTombstone('client-deleted-earlier.md', 2000, 'client-1');
+
+      const clientManifest: VaultManifest = {};
+      const serverManifest: VaultManifest = {
+        'client-deleted-earlier.md': {
+          path: 'client-deleted-earlier.md',
+          hash: 'serverhash',
+          mtime: 1000,
+          size: 100,
+          isBinary: false
+        }
+      };
+
+      const diff = vaultManager.computeDiff(clientManifest, serverManifest);
+      assert.ok(diff.toDeleteOnServer.includes('client-deleted-earlier.md'));
+      assert.strictEqual(diff.toDownload.includes('client-deleted-earlier.md'), false);
+    });
+
+    it('should record tombstone on deleteFile and clear it on writeFile', async () => {
+      const testFile = 'tombstone-lifecycle.md';
+      await vaultManager.writeFile(testFile, 'hello', false, Date.now(), 'test');
+      assert.strictEqual(vaultManager.getTombstone(testFile), undefined);
+
+      await vaultManager.deleteFile(testFile, 'test');
+      const tombstone = vaultManager.getTombstone(testFile);
+      assert.ok(tombstone);
+      assert.strictEqual(tombstone.path, testFile);
+
+      await vaultManager.writeFile(testFile, 'reborn', false, Date.now(), 'test');
+      assert.strictEqual(vaultManager.getTombstone(testFile), undefined);
+    });
+
+    it('should purge tombstones older than specified retention cutoff', async () => {
+      await vaultManager.recordTombstone('ancient.md', Date.now() - 100000, 'test');
+      await vaultManager.recordTombstone('recent.md', Date.now(), 'test');
+
+      const purged = await vaultManager.purgeOldTombstones(50000);
+      assert.ok(purged >= 1);
+      assert.strictEqual(vaultManager.getTombstone('ancient.md'), undefined);
+      assert.ok(vaultManager.getTombstone('recent.md'));
     });
   });
 });

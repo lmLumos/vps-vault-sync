@@ -15,12 +15,20 @@ import {
 import { ArchiveManager } from './archive-manager';
 import { EchoFilter } from './echo-filter';
 
+export interface Tombstone {
+  path: string;
+  deletedAt: number;
+  clientId?: string;
+}
+
 export class VaultManager {
   private vaultPath: string;
   private archiveManager: ArchiveManager;
   private echoFilter: EchoFilter;
   private ignoreFilter: IgnoreFilter;
   private lockQueue = new Map<string, Promise<void>>();
+  private tombstones = new Map<string, Tombstone>();
+  private tombstonesFile: string;
 
   constructor(
     vaultPath: string,
@@ -32,14 +40,99 @@ export class VaultManager {
     this.archiveManager = archiveManager;
     this.echoFilter = echoFilter;
     this.ignoreFilter = ignoreFilter;
+    this.tombstonesFile = path.join(this.archiveManager.getArchiveDir(), 'tombstones.json');
 
     this.ensureVaultDirectory();
+    this.loadTombstones();
   }
 
   private ensureVaultDirectory(): void {
     if (!fs.existsSync(this.vaultPath)) {
       fs.mkdirSync(this.vaultPath, { recursive: true });
     }
+  }
+
+  private async loadTombstones(): Promise<void> {
+    try {
+      if (fs.existsSync(this.tombstonesFile)) {
+        const data = await fs.promises.readFile(this.tombstonesFile, 'utf8');
+        const list = JSON.parse(data) as Tombstone[];
+        for (const t of list) {
+          if (t && t.path && typeof t.deletedAt === 'number') {
+            this.tombstones.set(t.path, t);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[VaultManager] Failed to load tombstones:', err);
+    }
+  }
+
+  private async saveTombstones(): Promise<void> {
+    try {
+      const dir = path.dirname(this.tombstonesFile);
+      if (!fs.existsSync(dir)) {
+        await fs.promises.mkdir(dir, { recursive: true });
+      }
+      const list = Array.from(this.tombstones.values());
+      await fs.promises.writeFile(this.tombstonesFile, JSON.stringify(list, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[VaultManager] Failed to save tombstones:', err);
+    }
+  }
+
+  /**
+   * Records a tombstone for a deleted file.
+   */
+  public async recordTombstone(relativePath: string, deletedAt = Date.now(), clientId = 'server'): Promise<void> {
+    this.tombstones.set(relativePath, {
+      path: relativePath,
+      deletedAt,
+      clientId
+    });
+    await this.saveTombstones();
+  }
+
+  /**
+   * Removes a tombstone when a file is created or overwritten.
+   */
+  public async removeTombstone(relativePath: string): Promise<void> {
+    if (this.tombstones.has(relativePath)) {
+      this.tombstones.delete(relativePath);
+      await this.saveTombstones();
+    }
+  }
+
+  /**
+   * Gets a tombstone record for a path.
+   */
+  public getTombstone(relativePath: string): Tombstone | undefined {
+    return this.tombstones.get(relativePath);
+  }
+
+  /**
+   * Returns a copy of all active tombstones.
+   */
+  public getTombstones(): Map<string, Tombstone> {
+    return new Map(this.tombstones);
+  }
+
+  /**
+   * Purges tombstones older than maxAgeMs.
+   */
+  public async purgeOldTombstones(maxAgeMs = 30 * 24 * 60 * 60 * 1000): Promise<number> {
+    const cutoff = Date.now() - maxAgeMs;
+    let purged = 0;
+    for (const [p, t] of this.tombstones.entries()) {
+      if (t.deletedAt < cutoff) {
+        this.tombstones.delete(p);
+        purged++;
+      }
+    }
+    if (purged > 0) {
+      await this.saveTombstones();
+    }
+    return purged;
   }
 
   /**
@@ -212,7 +305,8 @@ export class VaultManager {
   }
 
   /**
-   * Compares client manifest with server manifest to calculate needed synchronization diffs.
+   * Compares client manifest with server manifest to calculate needed synchronization diffs,
+   * including tombstone-aware deletion resolution.
    */
   public computeDiff(clientManifest: VaultManifest, serverManifest: VaultManifest): ManifestDiff {
     const toUpload: string[] = [];
@@ -223,7 +317,8 @@ export class VaultManager {
 
     const allPaths = new Set([
       ...Object.keys(clientManifest),
-      ...Object.keys(serverManifest)
+      ...Object.keys(serverManifest),
+      ...this.tombstones.keys()
     ]);
 
     for (const p of allPaths) {
@@ -231,23 +326,58 @@ export class VaultManager {
 
       const clientMeta = clientManifest[p];
       const serverMeta = serverManifest[p];
+      const tombstone = this.tombstones.get(p);
 
+      // Case A: Client explicitly marks as deleted
+      if (clientMeta?.isDeleted) {
+        if (serverMeta && !serverMeta.isDeleted) {
+          if (clientMeta.mtime >= serverMeta.mtime) {
+            toDeleteOnServer.push(p);
+          } else {
+            toDownload.push(p);
+          }
+        }
+        continue;
+      }
+
+      // Case B: Server explicitly marks as deleted in manifest
+      if (serverMeta?.isDeleted) {
+        if (clientMeta && !clientMeta.isDeleted) {
+          if (serverMeta.mtime >= clientMeta.mtime) {
+            toDeleteOnClient.push(p);
+          } else {
+            toUpload.push(p);
+          }
+        }
+        continue;
+      }
+
+      // Case C: Exists on server, missing on client
       if (!clientMeta && serverMeta) {
-        // Exists on server, missing on client
-        toDownload.push(p);
-      } else if (clientMeta && !serverMeta) {
-        // Exists on client, missing on server
-        toUpload.push(p);
-      } else if (clientMeta && serverMeta) {
-        // Exists on both sides
+        if (tombstone && tombstone.deletedAt >= serverMeta.mtime) {
+          toDeleteOnServer.push(p);
+        } else {
+          toDownload.push(p);
+        }
+      }
+
+      // Case D: Exists on client, missing on server
+      else if (clientMeta && !serverMeta) {
+        if (tombstone && tombstone.deletedAt >= clientMeta.mtime) {
+          toDeleteOnClient.push(p);
+        } else {
+          toUpload.push(p);
+        }
+      }
+
+      // Case E: Exists on both sides (neither deleted)
+      else if (clientMeta && serverMeta) {
         if (clientMeta.hash !== serverMeta.hash) {
-          // Hashes differ
           if (clientMeta.mtime > serverMeta.mtime) {
             toUpload.push(p);
           } else if (serverMeta.mtime > clientMeta.mtime) {
             toDownload.push(p);
           } else {
-            // Equal mtime but different content -> potential conflict
             conflicts.push(p);
           }
         }
@@ -383,6 +513,9 @@ export class VaultManager {
 
       const stat = await fs.promises.stat(fullPath);
 
+      // Remove any existing tombstone when file is written
+      await this.removeTombstone(relativePath);
+
       return {
         metadata: {
           path: relativePath,
@@ -398,7 +531,7 @@ export class VaultManager {
   }
 
   /**
-   * Deletes a file from the vault, archiving it to trash first.
+   * Deletes a file from the vault, archiving it to trash first and recording a tombstone.
    */
   public async deleteFile(relativePath: string, clientId: string): Promise<boolean> {
     const fullPath = this.getAbsolutePath(relativePath);
@@ -406,6 +539,7 @@ export class VaultManager {
 
     return this.acquireLock(relativePath, async () => {
       await this.archiveManager.archiveTrash(fullPath, relativePath);
+      await this.recordTombstone(relativePath, Date.now(), clientId);
       this.echoFilter.recordRemoteWrite(relativePath, '__DELETED__', clientId);
       await fs.promises.unlink(fullPath);
       return true;
@@ -429,6 +563,9 @@ export class VaultManager {
         if (!fs.existsSync(newDir)) {
           await fs.promises.mkdir(newDir, { recursive: true });
         }
+
+        await this.recordTombstone(oldRelativePath, Date.now(), clientId);
+        await this.removeTombstone(newRelativePath);
 
         this.echoFilter.recordRemoteWrite(oldRelativePath, '__RENAMED__', clientId);
         this.echoFilter.recordRemoteWrite(newRelativePath, '__RENAMED__', clientId);
