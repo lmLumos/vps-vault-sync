@@ -451,11 +451,32 @@ export class SyncClient {
   private hotReloadPluginOrTheme(normalizedPath: string): void {
     try {
       // 1. Theme / CSS / Appearance reload
-      if (
-        normalizedPath.includes('appearance.json') ||
-        normalizedPath.includes('/themes/') ||
-        normalizedPath.includes('/snippets/')
-      ) {
+      if (normalizedPath.includes('appearance.json')) {
+        this.app.vault.adapter.read(normalizedPath).then((contentStr) => {
+          try {
+            const conf = JSON.parse(contentStr);
+            const customCss = (this.app as any).customCss;
+
+            if (conf.cssTheme !== undefined && typeof customCss?.setTheme === 'function') {
+              customCss.setTheme(conf.cssTheme);
+            }
+            if (conf.theme !== undefined && typeof (this.app as any).setTheme === 'function') {
+              (this.app as any).setTheme(conf.theme);
+            }
+            if (conf.accentColor !== undefined && typeof (this.app as any).vault?.setConfig === 'function') {
+              (this.app as any).vault.setConfig('accentColor', conf.accentColor);
+            }
+
+            if (typeof customCss?.requestLoadTheme === 'function') customCss.requestLoadTheme();
+            if (typeof customCss?.loadTheme === 'function') customCss.loadTheme();
+            if (typeof customCss?.requestLoadSnippets === 'function') customCss.requestLoadSnippets();
+            if (typeof customCss?.readSnippets === 'function') customCss.readSnippets();
+            this.app.workspace.trigger('css-change');
+          } catch {
+            // ignore JSON parse
+          }
+        }).catch(() => {});
+      } else if (normalizedPath.includes('/themes/') || normalizedPath.includes('/snippets/')) {
         const customCss = (this.app as any).customCss;
         if (customCss) {
           if (typeof customCss.requestLoadTheme === 'function') customCss.requestLoadTheme();
@@ -463,6 +484,7 @@ export class SyncClient {
           if (typeof customCss.loadTheme === 'function') customCss.loadTheme();
           if (typeof customCss.readSnippets === 'function') customCss.readSnippets();
         }
+        this.app.workspace.trigger('css-change');
       }
 
       // 2. Plugin data or manifest changes (Icons, Themes, Minimal settings, etc.)
@@ -485,22 +507,46 @@ export class SyncClient {
               await plugins.loadManifests();
             }
 
+            const isEnabled = Boolean(
+              plugins.plugins?.[pluginId] ||
+              (plugins.enabledPlugins instanceof Set && plugins.enabledPlugins.has(pluginId)) ||
+              (Array.isArray(plugins.enabledPlugins) && plugins.enabledPlugins.includes(pluginId))
+            );
+
             // If plugin is enabled, reload it so it reads new data.json
-            if (plugins.enabledPlugins?.has(pluginId)) {
-              console.log(`[SyncClient] Hot-reloading plugin "${pluginId}" after settings/data sync...`);
+            if (isEnabled) {
+              console.log(`[SyncClient] Live reloading plugin "${pluginId}" after sync...`);
               if (typeof plugins.disablePlugin === 'function' && typeof plugins.enablePlugin === 'function') {
                 await plugins.disablePlugin(pluginId);
                 await plugins.enablePlugin(pluginId);
               }
+
+              // Trigger internal hooks on newly initialized instance if available
+              const newInstance = plugins.plugins?.[pluginId];
+              if (newInstance) {
+                if (typeof newInstance.loadIconFolderData === 'function') {
+                  await newInstance.loadIconFolderData();
+                }
+                if (typeof newInstance.loadSettings === 'function') {
+                  await newInstance.loadSettings();
+                }
+                if (typeof newInstance.handleChangeLayout === 'function') {
+                  newInstance.handleChangeLayout();
+                }
+              }
             }
 
-            // Refresh file explorer if icon plugin reloaded
-            if (pluginId.includes('icon') || pluginId.includes('folder')) {
-              const leaves = this.app.workspace.getLeavesOfType('file-explorer');
-              for (const leaf of leaves) {
-                if ((leaf.view as any)?.requestSort) {
-                  (leaf.view as any).requestSort();
-                }
+            // Always trigger CSS change for style plugins (Minimal, Style Settings, etc.)
+            this.app.workspace.trigger('css-change');
+
+            // Refresh file explorer views so icon changes render immediately
+            const leaves = this.app.workspace.getLeavesOfType('file-explorer');
+            for (const leaf of leaves) {
+              const view = leaf.view as any;
+              if (view) {
+                if (typeof view.requestSort === 'function') view.requestSort();
+                if (typeof view.render === 'function') view.render();
+                if (view.tree?.render) view.tree.render();
               }
             }
           }, 350);

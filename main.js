@@ -2384,7 +2384,34 @@ var SyncClient = class {
    */
   hotReloadPluginOrTheme(normalizedPath) {
     try {
-      if (normalizedPath.includes("appearance.json") || normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
+      if (normalizedPath.includes("appearance.json")) {
+        this.app.vault.adapter.read(normalizedPath).then((contentStr) => {
+          try {
+            const conf = JSON.parse(contentStr);
+            const customCss = this.app.customCss;
+            if (conf.cssTheme !== void 0 && typeof customCss?.setTheme === "function") {
+              customCss.setTheme(conf.cssTheme);
+            }
+            if (conf.theme !== void 0 && typeof this.app.setTheme === "function") {
+              this.app.setTheme(conf.theme);
+            }
+            if (conf.accentColor !== void 0 && typeof this.app.vault?.setConfig === "function") {
+              this.app.vault.setConfig("accentColor", conf.accentColor);
+            }
+            if (typeof customCss?.requestLoadTheme === "function")
+              customCss.requestLoadTheme();
+            if (typeof customCss?.loadTheme === "function")
+              customCss.loadTheme();
+            if (typeof customCss?.requestLoadSnippets === "function")
+              customCss.requestLoadSnippets();
+            if (typeof customCss?.readSnippets === "function")
+              customCss.readSnippets();
+            this.app.workspace.trigger("css-change");
+          } catch {
+          }
+        }).catch(() => {
+        });
+      } else if (normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
         const customCss = this.app.customCss;
         if (customCss) {
           if (typeof customCss.requestLoadTheme === "function")
@@ -2396,6 +2423,7 @@ var SyncClient = class {
           if (typeof customCss.readSnippets === "function")
             customCss.readSnippets();
         }
+        this.app.workspace.trigger("css-change");
       }
       const pluginMatch = normalizedPath.match(/(?:\.obsidian|[^\/]+)\/plugins\/([^\/]+)\//);
       if (pluginMatch) {
@@ -2412,19 +2440,39 @@ var SyncClient = class {
             if (typeof plugins.loadManifests === "function") {
               await plugins.loadManifests();
             }
-            if (plugins.enabledPlugins?.has(pluginId)) {
-              console.log(`[SyncClient] Hot-reloading plugin "${pluginId}" after settings/data sync...`);
+            const isEnabled = Boolean(
+              plugins.plugins?.[pluginId] || plugins.enabledPlugins instanceof Set && plugins.enabledPlugins.has(pluginId) || Array.isArray(plugins.enabledPlugins) && plugins.enabledPlugins.includes(pluginId)
+            );
+            if (isEnabled) {
+              console.log(`[SyncClient] Live reloading plugin "${pluginId}" after sync...`);
               if (typeof plugins.disablePlugin === "function" && typeof plugins.enablePlugin === "function") {
                 await plugins.disablePlugin(pluginId);
                 await plugins.enablePlugin(pluginId);
               }
-            }
-            if (pluginId.includes("icon") || pluginId.includes("folder")) {
-              const leaves = this.app.workspace.getLeavesOfType("file-explorer");
-              for (const leaf of leaves) {
-                if (leaf.view?.requestSort) {
-                  leaf.view.requestSort();
+              const newInstance = plugins.plugins?.[pluginId];
+              if (newInstance) {
+                if (typeof newInstance.loadIconFolderData === "function") {
+                  await newInstance.loadIconFolderData();
                 }
+                if (typeof newInstance.loadSettings === "function") {
+                  await newInstance.loadSettings();
+                }
+                if (typeof newInstance.handleChangeLayout === "function") {
+                  newInstance.handleChangeLayout();
+                }
+              }
+            }
+            this.app.workspace.trigger("css-change");
+            const leaves = this.app.workspace.getLeavesOfType("file-explorer");
+            for (const leaf of leaves) {
+              const view = leaf.view;
+              if (view) {
+                if (typeof view.requestSort === "function")
+                  view.requestSort();
+                if (typeof view.render === "function")
+                  view.render();
+                if (view.tree?.render)
+                  view.tree.render();
               }
             }
           }, 350);
