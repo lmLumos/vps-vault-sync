@@ -1,1 +1,1 @@
-# linux-vault-sync
+# vps-vault-sync
