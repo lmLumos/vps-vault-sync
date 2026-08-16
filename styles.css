@@ -1,0 +1,201 @@
+/* VPS Live Vault Sync Styles */
+
+.vps-sync-status-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: var(--radius-s);
+  transition: background-color 0.15s ease;
+}
+
+.vps-sync-status-bar:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.vps-sync-status-bar .vps-sync-icon svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+}
+
+/* Status States */
+.vps-sync-status-bar.is-synced .vps-sync-icon {
+  color: var(--text-success, #48bb78);
+}
+
+.vps-sync-status-bar.is-syncing .vps-sync-icon {
+  color: var(--text-accent, #7c3aed);
+  animation: vps-spin 1.5s linear infinite;
+}
+
+.vps-sync-status-bar.is-error .vps-sync-icon {
+  color: var(--text-error, #f56565);
+}
+
+.vps-sync-status-bar.is-disconnected .vps-sync-icon {
+  color: var(--text-muted, #a0aec0);
+}
+
+@keyframes vps-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Modal Styles */
+.vps-sync-log-modal {
+  min-width: 600px;
+  max-width: 850px;
+}
+
+.vps-sync-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.vps-sync-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vps-sync-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vps-sync-badge-synced {
+  background-color: rgba(72, 187, 120, 0.15);
+  color: var(--text-success, #48bb78);
+}
+
+.vps-sync-badge-syncing,
+.vps-sync-badge-reconciling,
+.vps-sync-badge-connecting {
+  background-color: rgba(124, 58, 237, 0.15);
+  color: var(--text-accent, #7c3aed);
+}
+
+.vps-sync-badge-error {
+  background-color: rgba(245, 101, 101, 0.15);
+  color: var(--text-error, #f56565);
+}
+
+.vps-sync-badge-disconnected {
+  background-color: rgba(160, 174, 192, 0.15);
+  color: var(--text-muted, #a0aec0);
+}
+
+.vps-sync-log-container {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.vps-sync-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.vps-sync-log-table th {
+  position: sticky;
+  top: 0;
+  background-color: var(--background-secondary);
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.vps-sync-log-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vps-log-time {
+  white-space: nowrap;
+  color: var(--text-muted);
+  width: 80px;
+}
+
+.vps-log-type {
+  width: 100px;
+}
+
+.vps-badge-upload {
+  background-color: rgba(66, 153, 225, 0.15);
+  color: #3182ce;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-badge-download {
+  background-color: rgba(72, 187, 120, 0.15);
+  color: #38a169;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-badge-conflict {
+  background-color: rgba(237, 137, 54, 0.15);
+  color: #dd6b20;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-badge-delete {
+  background-color: rgba(245, 101, 101, 0.15);
+  color: #e53e3e;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-badge-error {
+  background-color: rgba(229, 62, 62, 0.2);
+  color: #e53e3e;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-badge-info {
+  background-color: rgba(160, 174, 192, 0.15);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.vps-log-path {
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-sync-empty-log {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+}

@@ -1,0 +1,10 @@
+{
+  "id": "vps-vault-sync",
+  "name": "VPS Live Vault Sync",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Live bidirectional synchronization of notes, attachments, plugins, themes, and settings to your VPS server.",
+  "author": "Antigravity & Community",
+  "authorUrl": "https://github.com",
+  "isDesktopOnly": false
+}
