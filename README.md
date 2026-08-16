@@ -1,23 +1,25 @@
 # ⚡ VPS Live Vault Sync for Obsidian
 
-A high-performance, real-time, bi-directional synchronization system between **Obsidian** (Desktop & Mobile) and a self-hosted **VPS server**.
+A high-performance, real-time, bi-directional synchronization system between **Obsidian** (Desktop, iOS & Android) and a self-hosted **VPS server**.
 
-Your notes, attachments, plugins, themes, and configuration files live on your VPS as a **normal, human-readable directory**. Edit files on your VPS with vim, VS Code Remote, or scripts, and watch them update live in Obsidian across all your devices.
+Your notes, attachments, plugins, themes, and configuration files live on your VPS as a **normal, human-readable directory**. Edit files on your VPS with vim, VS Code Remote, or automated scripts, and watch them update live in Obsidian across all your devices with sub-second latency.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-- **⚡ Real-Time Bidirectional Sync**: Instant live syncing over WebSockets with automatic reconnection and exponential backoff.
-- **📁 Plain Files on VPS**: Your vault is stored directly on your VPS disk as standard Markdown and assets. No opaque proprietary database or vendor lock-in.
-- **🖥️ Direct VPS Edits**: Edit files directly on the server disk (via SSH, scripts, Git pulls) — file changes are detected via `chokidar` and immediately broadcast to all connected devices.
+- **⚡ Real-Time Bidirectional Sync**: Instant live syncing over WebSockets with automatic reconnection, heartbeat keep-alive, and exponential backoff.
+- **🎨 Zero-Restart Live UI Hot-Reloading**: Changes to themes (`appearance.json`), Dark/Light color schemes (`obsidian-minimal-settings`), CSS variables (`obsidian-style-settings`), and folder icons (`obsidian-icon-folder` / Iconize) repaint immediately on receiving devices without reloading Obsidian.
+- **📁 Plain Files on VPS**: Your vault is stored directly on your VPS disk as standard Markdown and assets. No proprietary database or vendor lock-in.
+- **🖥️ Direct VPS Edits**: Edit files directly on the server disk (via SSH, scripts, Git pulls) — file changes are detected via filesystem watchers and immediately broadcast to all connected devices.
 - **🧩 Full `.obsidian/` Sync**: Synchronize community plugins, themes, CSS snippets, hotkeys, and plugin settings.
 - **📱 Device-Specific Workspace Toggle**: Option to exclude `workspace.json` so mobile and desktop devices can maintain separate panel/tab layouts while keeping themes and plugins in sync.
-- **🔀 3-Way Line-Based Merge**: Concurrently edited notes automatically merge non-overlapping lines. On direct collisions, creates `[Note].sync-conflict-[date].md` backups so no data is ever lost.
+- **🔀 Resilient 3-Way Line-Based Merge**: Concurrently edited Markdown notes automatically merge non-overlapping lines. On direct collisions, creates `[Note].sync-conflict-[date].md` backups. Configuration and JSON files use atomic Last-Write-Wins to prevent syntax corruption.
+- **🚀 Mobile Fast-Rename Resilience**: Mobile "New Note" taps immediately rename `Untitled.md` to note titles; sync events carry inline content so notes are never lost or deleted during fast renaming.
+- **📴 Offline Queue & Mobile Lifecycle Resume**: Changes made while offline are queued locally in persistent storage. Sync automatically flushes the queue when returning to the app (`visibilitychange` / `online` events).
 - **📦 Version History & Safe Trash**: Edits and deletions are safely archived in `.sync-archive/` on your VPS with configurable retention days.
-- **🔒 Echo Suppression**: Prevents network loops when files are written remotely.
-- **📴 Offline Queue**: Changes made while disconnected are queued locally and synchronized automatically upon reconnection.
-- **🐳 Docker Ready**: 1-minute containerized deployment with optional automated Let's Encrypt SSL via Caddy.
+- **🔒 Echo Suppression**: Prevents network echo loops when files are written remotely.
+- **🐳 Docker Ready**: 1-minute containerized deployment with optional automated Let's Encrypt SSL via Caddy or existing Nginx / Cloudflare Tunnels.
 
 ---
 
@@ -26,12 +28,12 @@ Your notes, attachments, plugins, themes, and configuration files live on your V
 ```mermaid
 flowchart LR
     subgraph Clients["Obsidian Clients (Desktop / iOS / Android)"]
-        ClientA["Obsidian Client A<br/>(Obsidian Plugin)"]
-        ClientB["Obsidian Client B<br/>(Obsidian Plugin)"]
+        ClientA["Obsidian Desktop<br/>(vps-vault-sync)"]
+        ClientB["Obsidian iPhone / Mobile<br/>(vps-vault-sync)"]
     end
 
     subgraph VPS["VPS Server (Docker)"]
-        ReverseProxy["Reverse Proxy / SSL<br/>(Caddy / Nginx / Tunnel)"]
+        ReverseProxy["Reverse Proxy / SSL<br/>(Caddy / Nginx / Cloudflare)"]
         SyncServer["VPS Sync Daemon<br/>(Node.js / TypeScript)"]
         LocalFS["Local Vault Folder<br/>(/data/vault)"]
         Archive["Version History & Trash<br/>(.sync-archive)"]
@@ -52,7 +54,7 @@ flowchart LR
 
 1. Clone this repository on your VPS:
    ```bash
-   git clone https://github.com/your-repo/vps-vault-sync.git
+   git clone https://github.com/lmLumos/vps-vault-sync.git
    cd vps-vault-sync/docker
    ```
 
@@ -76,7 +78,7 @@ flowchart LR
    ```bash
    docker compose -f docker-compose.caddy.yml up -d
    ```
-   Caddy will automatically obtain a free Let's Encrypt SSL certificate and proxy traffic to the sync server.
+   Caddy will automatically obtain a free Let's Encrypt SSL certificate and reverse-proxy traffic to the sync server.
 
 ---
 
@@ -112,30 +114,42 @@ docker compose up -d
 
 ## 📲 Obsidian Plugin Installation
 
-### Manual Installation (Desktop & Mobile)
+### Method 1: Easy Installation via BRAT (Recommended for iOS / Mobile & Desktop)
 
-1. Build or download the plugin release files:
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-
-2. Copy these 3 files into your Obsidian vault plugin folder:
-   `<YourVault>/.obsidian/plugins/vps-vault-sync/`
-
-3. In Obsidian, go to **Settings > Community plugins**:
-   - Reload installed plugins.
-   - Toggle **VPS Live Vault Sync** ON.
-
-4. Open the plugin settings (**Settings > VPS Live Vault Sync**):
-   - **Server URL**: `wss://sync.yourdomain.com` (or `ws://YOUR_VPS_IP:3000`)
-   - **Secret API Token**: The `SYNC_TOKEN` configured in your server `.env` or `docker-compose.yml`.
-   - **Device Name**: Give your device a name (e.g. *MacBook Pro*, *iPhone*).
-   - Click **Test Connection** & verify the green success notice.
-   - Click **Sync Now** to perform initial reconciliation!
+1. In Obsidian, install the community plugin **BRAT** (`Obsidian42 - BRAT`).
+2. Go to **Settings > Community plugins > BRAT**.
+3. Under **Plugins list**, tap **Add Beta plugin**.
+4. Enter the GitHub repository URL:
+   ```text
+   lmLumos/vps-vault-sync
+   ```
+5. Tap **Add Plugin**. BRAT will fetch the latest release and install it.
+6. In **Settings > Community plugins**, enable **VPS Live Vault Sync**.
 
 ---
 
-## ⚙️ Configuration & Environment Variables
+### Method 2: Manual Installation
+
+1. Download the release files (`main.js`, `manifest.json`, `styles.css`) from GitHub Releases.
+2. Place them in your Obsidian vault:
+   `<YourVault>/.obsidian/plugins/vps-vault-sync/`
+3. In Obsidian, go to **Settings > Community plugins**, click **Reload plugins**, and toggle **VPS Live Vault Sync** ON.
+
+---
+
+## ⚙️ Plugin Configuration
+
+Open **Settings > VPS Live Vault Sync**:
+
+- **Server URL**: `wss://sync.yourdomain.com` (or `ws://YOUR_SERVER_IP:3000`)
+- **Secret API Token**: The `SYNC_TOKEN` configured in your server `.env` or `docker-compose.yml`.
+- **Device Name**: A friendly name (e.g. *MacBook Pro*, *iPhone 15*).
+- Click **Test Connection** to verify connectivity.
+- Click **Sync Now** to perform an initial bidirectional reconciliation.
+
+---
+
+## ⚙️ Environment Variables (Server)
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
@@ -168,18 +182,29 @@ dist/
 
 ---
 
-## 🛠️ Development & Building
+## 🛠️ Monorepo Structure & Building
 
-This repository is structured as a TypeScript monorepo using npm workspaces:
+```text
+vps-vault-sync/
+├── packages/
+│   ├── shared/          # Shared TypeScript types, diffing algorithms & constants
+│   ├── server/          # Node.js WebSocket sync daemon & chokidar watcher
+│   └── plugin/          # Obsidian plugin with live UI hot-reloader
+├── docker/              # Docker Compose configurations (Caddy, Nginx, Cloudflare)
+├── main.js              # Built root plugin for BRAT compatibility
+├── manifest.json        # Plugin manifest
+└── styles.css           # Plugin styles
+```
 
+### Build Commands:
 ```bash
 # 1. Install all dependencies across packages
 npm install
 
-# 2. Build shared library, server, and Obsidian plugin
-npm run build
+# 2. Build shared library, server, and Obsidian plugin in sequence
+npm run build -w @vps-vault-sync/shared && npm run build -w @vps-vault-sync/server && npm run build -w @vps-vault-sync/obsidian-plugin
 
-# 3. Run unit and integration tests
+# 3. Run unit tests
 npm test
 ```
 
