@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-08-16
+
+### Fixed
+- **Docker Multi-Stage Build**: Updated runner stage in Dockerfile to copy compiled artifacts (`dist/`) directly from the `builder` stage.
+- **WebSocket Heartbeat & Keepalive**: Added `pong` and `ping` frame event listeners to ensure idle WebSocket connections remain active indefinitely across proxies without timing out.
+- **Production Verification**: Validated live bidirectional sync on production Debian VPS alongside Cloudflare Tunnel and Nginx reverse proxy.
+
 ## [1.0.0] - 2026-08-16
 
 ### Added

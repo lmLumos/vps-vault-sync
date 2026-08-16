@@ -28,12 +28,12 @@ ENV VAULT_PATH=/data/vault
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
-# Copy built files and dependencies
+# Copy built files from builder stage
 COPY package.json ./
 COPY packages/shared/package.json ./packages/shared/
-COPY packages/shared/dist/ ./packages/shared/dist/
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY packages/server/package.json ./packages/server/
-COPY packages/server/dist/ ./packages/server/dist/
+COPY --from=builder /app/packages/server/dist ./packages/server/dist
 
 # Install only production dependencies
 RUN npm install --omit=dev

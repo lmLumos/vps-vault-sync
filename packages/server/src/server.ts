@@ -91,6 +91,17 @@ export class SyncServer {
         }
       });
 
+      ws.on('pong', () => {
+        session.lastPing = Date.now();
+      });
+
+      ws.on('ping', () => {
+        session.lastPing = Date.now();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.pong();
+        }
+      });
+
       ws.on('close', () => {
         if (session.authenticated) {
           console.log(`[SyncServer] Client disconnected: ${session.clientName} (${session.clientId})`);
