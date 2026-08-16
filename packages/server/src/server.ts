@@ -157,7 +157,7 @@ export class SyncServer {
     this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
     this.wss = new WebSocketServer({
       server: this.httpServer,
-      maxPayload: 25 * 1024 * 1024 // 25 MB WebSocket payload limit (Issue 9)
+      maxPayload: Math.max(150 * 1024 * 1024, this.config.maxFileSizeBytes * 2)
     });
 
     this.setupWebSocketServer();
