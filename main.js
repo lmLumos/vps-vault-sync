@@ -64,7 +64,7 @@ var require_types = __commonJS({
         "**/*~",
         ".obsidian/cache/**",
         ".obsidian/workspace.json.tmp",
-        ".obsidian/plugins/vps-vault-sync/data.json",
+        ".obsidian/plugins/vps-vault-sync/**",
         "**/*.sync-conflict*"
       ]
     };
@@ -1866,7 +1866,7 @@ var require_ignore = __commonJS({
         const normalized = rawPath.replace(/\\/g, "/").replace(/^\/+/, "");
         if (!normalized)
           return true;
-        if (normalized === ".obsidian/plugins/vps-vault-sync/data.json" || normalized.endsWith("/.obsidian/plugins/vps-vault-sync/data.json") || normalized.startsWith(".obsidian/plugins/vps-vault-sync/data.json") || normalized.startsWith(".sync-archive/") || normalized.startsWith(".git/")) {
+        if (normalized.startsWith(".obsidian/plugins/vps-vault-sync/") || normalized.includes("/.obsidian/plugins/vps-vault-sync/") || normalized.startsWith(".sync-archive/") || normalized.startsWith(".sync-trash/") || normalized.startsWith(".trash/") || normalized.startsWith(".git/")) {
           return true;
         }
         for (const regex of this.patterns) {
@@ -3213,6 +3213,10 @@ var ConflictHandler = class {
     }, 1e3);
   }
   recordBaseSnapshot(path, content) {
+    if (!path.endsWith(".md") && !path.endsWith(".txt"))
+      return;
+    if (path.startsWith(".obsidian/"))
+      return;
     this.baseSnapshots.set(path, content);
     this.savePersistedSnapshots();
   }

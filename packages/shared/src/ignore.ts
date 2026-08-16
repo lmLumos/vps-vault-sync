@@ -97,12 +97,13 @@ export class IgnoreFilter {
     // Ignore empty or root paths (e.g., empty string or leading slashes only)
     if (!normalized) return true;
 
-    // Critical security exclusions that can never be synced regardless of custom ignore rules
+    // Critical security and plugin-internal exclusions that can never be synced
     if (
-      normalized === '.obsidian/plugins/vps-vault-sync/data.json' ||
-      normalized.endsWith('/.obsidian/plugins/vps-vault-sync/data.json') ||
-      normalized.startsWith('.obsidian/plugins/vps-vault-sync/data.json') ||
+      normalized.startsWith('.obsidian/plugins/vps-vault-sync/') ||
+      normalized.includes('/.obsidian/plugins/vps-vault-sync/') ||
       normalized.startsWith('.sync-archive/') ||
+      normalized.startsWith('.sync-trash/') ||
+      normalized.startsWith('.trash/') ||
       normalized.startsWith('.git/')
     ) {
       return true;

@@ -54,6 +54,8 @@ export class ConflictHandler {
   }
 
   public recordBaseSnapshot(path: string, content: string): void {
+    if (!path.endsWith('.md') && !path.endsWith('.txt')) return;
+    if (path.startsWith('.obsidian/')) return;
     this.baseSnapshots.set(path, content);
     this.savePersistedSnapshots();
   }
