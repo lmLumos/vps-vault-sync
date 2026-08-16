@@ -28,22 +28,22 @@ Your notes, attachments, plugins, themes, and configuration files live on your V
 ```mermaid
 flowchart LR
     subgraph Clients["Obsidian Clients (Desktop / iOS / Android)"]
-        ClientA["Obsidian Desktop<br/>(vps-vault-sync)"]
-        ClientB["Obsidian iPhone / Mobile<br/>(vps-vault-sync)"]
+        ClientA["Obsidian Desktop (vps-vault-sync)"]
+        ClientB["Obsidian iPhone / Mobile (vps-vault-sync)"]
     end
 
     subgraph VPS["VPS Server (Docker)"]
-        ReverseProxy["Reverse Proxy / SSL<br/>(Caddy / Nginx / Cloudflare)"]
-        SyncServer["VPS Sync Daemon<br/>(Node.js / TypeScript)"]
-        LocalFS["Local Vault Folder<br/>(/data/vault)"]
-        Archive["Version History & Trash<br/>(.sync-archive)"]
+        ReverseProxy["Reverse Proxy / SSL (Caddy / Nginx / Cloudflare)"]
+        SyncServer["VPS Sync Daemon (Node.js / TypeScript)"]
+        LocalFS["Local Vault Folder (/data/vault)"]
+        Archive["Version History & Trash (.sync-archive)"]
     end
 
-    ClientA <-->|WSS + HTTPS API<br/>(Token Auth)| ReverseProxy
-    ClientB <-->|WSS + HTTPS API<br/>(Token Auth)| ReverseProxy
+    ClientA <-->|"WSS + HTTPS API (Token Auth)"| ReverseProxy
+    ClientB <-->|"WSS + HTTPS API (Token Auth)"| ReverseProxy
     ReverseProxy <--> SyncServer
-    SyncServer <-->|Chokidar Watcher & Echo Suppression| LocalFS
-    SyncServer -->|Backup / Retention| Archive
+    SyncServer <-->|"Watcher & Echo Suppression"| LocalFS
+    SyncServer -->|"Backup / Retention"| Archive
 ```
 
 ---
