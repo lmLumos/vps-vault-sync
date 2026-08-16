@@ -18,8 +18,11 @@ export interface ServerConfig {
 
 export function loadConfig(): ServerConfig {
   const syncToken = process.env.SYNC_TOKEN || process.env.VAULT_SYNC_TOKEN || '';
-  if (!syncToken) {
-    console.warn('\x1b[33m[WARN] SYNC_TOKEN is not set in environment variables! Using default token: "default-secret-token-change-me"\x1b[0m');
+  if (!syncToken || syncToken === 'default-secret-token-change-me') {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('\x1b[31m[FATAL] SYNC_TOKEN must be configured with a strong secret. Server refusing to start.\x1b[0m');
+      process.exit(1);
+    }
   }
 
   const rawVaultPath = process.env.VAULT_PATH || process.env.VAULT_DIR || path.resolve(process.cwd(), 'vault-data');

@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docker Multi-Stage Build**: Updated runner stage in Dockerfile to copy compiled artifacts (`dist/`) directly from the `builder` stage.
 - **WebSocket Heartbeat & Keepalive**: Added `pong` and `ping` frame event listeners to ensure idle WebSocket connections remain active indefinitely across proxies without timing out.
 - **Production Verification**: Validated live bidirectional sync on production Debian VPS alongside Cloudflare Tunnel and Nginx reverse proxy.
+- **Authentication Secret Enforcement (Issue #2)**: Enforced required `SYNC_TOKEN` / `VAULT_SYNC_TOKEN` environment variable configuration on server startup in non-test environments, terminating with a fatal error instead of silently falling back to a hardcoded default token.
+- **Header-Only Authentication (Issue #3)**: Restricted HTTP API token extraction strictly to the `Authorization: Bearer <token>` header, removing support for `?token=` query parameters to prevent credential leakage into reverse proxy logs and browser history.
+- **SVG File Classification (Issue #22)**: Removed `.svg` from `binaryExtensions` in `@vps-vault-sync/shared` so vector assets are classified as text format, avoiding base64 encoding overhead and enabling text-based merge capabilities.
+- **Ignore Filter Comment Clarification (Issue #25)**: Updated misleading comment in `IgnoreFilter.isIgnored()` to accurately state that empty and root-only paths are ignored.
 
 ## [1.0.0] - 2026-08-16
 

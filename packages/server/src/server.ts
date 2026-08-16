@@ -466,11 +466,12 @@ export class SyncServer {
       return;
     }
 
-    // Verify token for all other API endpoints
+    // Verify token for all other API endpoints (Authorization: Bearer <token> header only)
     const authHeader = req.headers.authorization || '';
-    const token = authHeader.replace(/^Bearer\s+/i, '') || url.searchParams.get('token');
+    const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    const token = bearerMatch ? bearerMatch[1].trim() : '';
 
-    if (token !== this.config.syncToken) {
+    if (!token || token !== this.config.syncToken) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
       return;
