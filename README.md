@@ -1,1 +1,1 @@
-# obsidian-sync
+# linux-vault-sync
