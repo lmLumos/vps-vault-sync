@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { hashBuffer } from '@vps-vault-sync/shared';
 
 export class ArchiveManager {
   private archiveDir: string;
@@ -38,11 +39,14 @@ export class ArchiveManager {
       const stat = await fs.promises.stat(fullFilePath);
       if (!stat.isFile()) return;
 
+      const fileBuf = await fs.promises.readFile(fullFilePath);
+      const hash = hashBuffer(fileBuf);
+
       const timestamp = Date.now();
       const safeRelPath = relativePath.replace(/[/\\:]/g, '_');
       const targetPath = path.join(this.historyDir, `${safeRelPath}.${timestamp}.bak`);
 
-      await fs.promises.copyFile(fullFilePath, targetPath);
+      await fs.promises.writeFile(targetPath, fileBuf);
 
       // Also write metadata file
       const meta = {
@@ -50,11 +54,67 @@ export class ArchiveManager {
         archivedAt: timestamp,
         size: stat.size,
         mtime: stat.mtimeMs,
+        hash,
         type: 'history'
       };
       await fs.promises.writeFile(`${targetPath}.json`, JSON.stringify(meta, null, 2), 'utf8');
     } catch (err) {
       console.error(`[Archive] Failed to archive version of ${relativePath}:`, err);
+    }
+  }
+
+  /**
+   * Retrieves the content of an archived version by relativePath and optionally matching hash.
+   */
+  public async getArchivedVersion(relativePath: string, baseHash?: string): Promise<string | null> {
+    try {
+      if (!fs.existsSync(this.historyDir)) return null;
+
+      const safeRelPath = relativePath.replace(/[/\\:]/g, '_');
+      const prefix = `${safeRelPath}.`;
+      const files = await fs.promises.readdir(this.historyDir);
+
+      // Find all bak files for this relativePath
+      const matching = files
+        .filter(f => f.startsWith(prefix) && f.endsWith('.bak'))
+        .sort((a, b) => {
+          // Sort newest first by timestamp in filename: safeRelPath.timestamp.bak
+          const tsA = parseInt(a.slice(prefix.length, -4), 10) || 0;
+          const tsB = parseInt(b.slice(prefix.length, -4), 10) || 0;
+          return tsB - tsA;
+        });
+
+      if (matching.length === 0) return null;
+
+      if (baseHash) {
+        // Try to find exact hash match
+        for (const file of matching) {
+          const bakPath = path.join(this.historyDir, file);
+          const metaPath = `${bakPath}.json`;
+          if (fs.existsSync(metaPath)) {
+            try {
+              const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
+              if (meta.hash === baseHash) {
+                return await fs.promises.readFile(bakPath, 'utf8');
+              }
+            } catch {
+              // ignore json parse error
+            }
+          }
+          // Fallback check: read file and compare hash
+          const buf = await fs.promises.readFile(bakPath);
+          if (hashBuffer(buf) === baseHash) {
+            return buf.toString('utf8');
+          }
+        }
+      }
+
+      // If no exact hash match was found or no baseHash provided, return the most recent archived version
+      const latestBakPath = path.join(this.historyDir, matching[0]);
+      return await fs.promises.readFile(latestBakPath, 'utf8');
+    } catch (err) {
+      console.error(`[Archive] Failed to retrieve archived version for ${relativePath}:`, err);
+      return null;
     }
   }
 

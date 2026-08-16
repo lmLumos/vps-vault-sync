@@ -19,7 +19,7 @@ import { ArchiveManager } from './archive-manager';
 import { EchoFilter } from './echo-filter';
 import { VaultManager } from './vault-manager';
 import { VaultWatcher } from './watcher';
-import { SyncServer } from './server';
+import { SyncServer, timingSafeCompare, AuthRateLimiter } from './server';
 import { ServerConfig, loadConfig } from './config';
 
 describe('VPS Sync Server Integration Tests', () => {
@@ -534,6 +534,275 @@ describe('VPS Sync Server Integration Tests', () => {
       assert.strictEqual(res.status, 500);
       const data = await res.json() as { error?: string };
       assert.ok(data.error?.includes('Directory traversal attempt blocked'));
+    });
+  });
+
+  describe('Server 3-Way Merge Base Retrieval (Issue 12)', () => {
+    it('should cleanly merge non-conflicting concurrent edits using archived base', async () => {
+      const filePath = 'merge-test.md';
+      const initialContent = 'Line 1: Header\nLine 2: Server Section\nLine 3: Client Section\nLine 4: Footer\n';
+
+      // Step 1: Write initial version
+      const v1 = await vaultManager.writeFile(filePath, initialContent, false, Date.now(), 'initial');
+      const baseHash = v1.metadata.hash;
+
+      // Step 2: Server modifies Line 2
+      const serverContent = 'Line 1: Header\nLine 2: Server Section [EDITED ON SERVER]\nLine 3: Client Section\nLine 4: Footer\n';
+      await vaultManager.writeFile(filePath, serverContent, false, Date.now(), 'server-user');
+
+      // Step 3: Client concurrently modified Line 3 based on initial version (baseHash)
+      const clientContent = 'Line 1: Header\nLine 2: Server Section\nLine 3: Client Section [EDITED ON CLIENT]\nLine 4: Footer\n';
+      const writeResult = await vaultManager.writeFile(filePath, clientContent, false, Date.now(), 'client-user', baseHash);
+
+      // Assertions: 3-way merge should succeed without conflict
+      assert.strictEqual(writeResult.conflictOccurred, false);
+      assert.strictEqual(writeResult.conflictPath, undefined);
+
+      const fileData = await vaultManager.readFile(filePath);
+      assert.ok(fileData);
+      assert.ok(fileData.content.includes('Server Section [EDITED ON SERVER]'));
+      assert.ok(fileData.content.includes('Client Section [EDITED ON CLIENT]'));
+    });
+
+    it('should detect collision and generate conflict file when edits collide on same line', async () => {
+      const filePath = 'collision-test.md';
+      const initialContent = 'Line 1: Header\nLine 2: Original Text\nLine 3: Footer\n';
+
+      const v1 = await vaultManager.writeFile(filePath, initialContent, false, Date.now(), 'initial');
+      const baseHash = v1.metadata.hash;
+
+      // Server modifies Line 2
+      const serverContent = 'Line 1: Header\nLine 2: Server Edit\nLine 3: Footer\n';
+      await vaultManager.writeFile(filePath, serverContent, false, Date.now(), 'server-user');
+
+      // Client also modifies Line 2 based on v1
+      const clientContent = 'Line 1: Header\nLine 2: Client Edit\nLine 3: Footer\n';
+      const writeResult = await vaultManager.writeFile(filePath, clientContent, false, Date.now(), 'client-user', baseHash);
+
+      assert.strictEqual(writeResult.conflictOccurred, true);
+      assert.ok(writeResult.conflictPath);
+      assert.ok(fs.existsSync(vaultManager.getAbsolutePath(writeResult.conflictPath)));
+    });
+  });
+
+  describe('Streaming File Hashing & Temporary Files (Issues 19 & 21)', () => {
+    it('should compute identical SHA-256 hash using streaming computeFileHash (Issue 21)', async () => {
+      const filePath = 'stream-hash-test.md';
+      const content = 'Test streaming hash content with various lines\n'.repeat(100);
+      await vaultManager.writeFile(filePath, content, false, Date.now(), 'test');
+
+      const fullPath = vaultManager.getAbsolutePath(filePath);
+      const streamHash = await vaultManager.computeFileHash(fullPath);
+      const manifest = await vaultManager.buildManifest();
+
+      assert.strictEqual(manifest[filePath].hash, streamHash);
+      assert.strictEqual(manifest[filePath].size, Buffer.byteLength(content));
+    });
+
+    it('should name temporary atomic write files with .tmp extension ignored by filter (Issue 19)', async () => {
+      const filePath = 'tmp-test.md';
+      await vaultManager.writeFile(filePath, 'Atomic write test', false, Date.now(), 'test');
+      assert.ok(fs.existsSync(vaultManager.getAbsolutePath(filePath)));
+      assert.strictEqual(ignoreFilter.isIgnored(`${filePath}.${Date.now()}.tmp`), true);
+      assert.strictEqual(ignoreFilter.isIgnored(`${filePath}.tmp.123456`), true);
+    });
+  });
+
+  describe('Timing-Safe Comparison & Rate Limiting (Issue 4)', () => {
+    it('should correctly compare tokens with timingSafeCompare', () => {
+      assert.strictEqual(timingSafeCompare('secret-token-123', 'secret-token-123'), true);
+      assert.strictEqual(timingSafeCompare('secret-token-123', 'wrong-token'), false);
+      assert.strictEqual(timingSafeCompare('short', 'much-longer-token'), false);
+      assert.strictEqual(timingSafeCompare('', 'token'), false);
+      assert.strictEqual(timingSafeCompare('', ''), true);
+    });
+
+    it('should rate limit authentication failures after 5 attempts', () => {
+      const limiter = new AuthRateLimiter(5, 60000, 60000);
+      const testIp = '192.168.1.100';
+
+      for (let i = 0; i < 5; i++) {
+        assert.strictEqual(limiter.isBlocked(testIp), false);
+        limiter.recordFailure(testIp);
+      }
+
+      assert.strictEqual(limiter.isBlocked(testIp), true);
+
+      // Reset and verify unblocked
+      limiter.reset();
+      assert.strictEqual(limiter.isBlocked(testIp), false);
+    });
+
+    it('should return HTTP 429 when IP is blocked by rate limiter', async () => {
+      server.getRateLimiter().recordFailure('127.0.0.1');
+      server.getRateLimiter().recordFailure('127.0.0.1');
+      server.getRateLimiter().recordFailure('127.0.0.1');
+      server.getRateLimiter().recordFailure('127.0.0.1');
+      server.getRateLimiter().recordFailure('127.0.0.1');
+
+      const res = await fetch(`http://127.0.0.1:${testPort}/api/manifest`, {
+        headers: { 'Authorization': `Bearer ${testToken}` }
+      });
+      assert.strictEqual(res.status, 429);
+      const data = await res.json() as { error?: string };
+      assert.ok(data.error?.includes('Too many failed authentication attempts'));
+
+      // Clear for subsequent tests
+      server.getRateLimiter().reset();
+    });
+  });
+
+  describe('Restricted CORS Policy (Issue 5)', () => {
+    it('should not allow untrusted external origins in CORS', async () => {
+      const res = await fetch(`http://127.0.0.1:${testPort}/health`, {
+        headers: { 'Origin': 'https://evil-attacker-site.com' }
+      });
+      assert.strictEqual(res.headers.get('access-control-allow-origin'), null);
+    });
+
+    it('should allow trusted localhost and app origins in CORS', async () => {
+      const res1 = await fetch(`http://127.0.0.1:${testPort}/health`, {
+        headers: { 'Origin': 'http://localhost:3000' }
+      });
+      assert.strictEqual(res1.headers.get('access-control-allow-origin'), 'http://localhost:3000');
+
+      const res2 = await fetch(`http://127.0.0.1:${testPort}/health`, {
+        headers: { 'Origin': 'app://obsidian.md' }
+      });
+      assert.strictEqual(res2.headers.get('access-control-allow-origin'), 'app://obsidian.md');
+    });
+  });
+
+  describe('WebSocket Security: Max Payload & Auth Timeout (Issue 9)', () => {
+    it('should connect WebSocket client securely', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${testPort}`);
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => {
+          ws.close();
+        });
+        ws.on('close', () => {
+          resolve();
+        });
+        ws.on('error', reject);
+      });
+    });
+  });
+
+  describe('HTTP Body Size Check & Abort Handling (Issue 10)', () => {
+    it('should reject POST /api/file exceeding maxFileSizeBytes with 413 Payload Too Large', async () => {
+      const hugeContent = 'A'.repeat(config.maxFileSizeBytes + 1024);
+      try {
+        const res = await fetch(`http://127.0.0.1:${testPort}/api/file`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${testToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            path: 'huge-file.txt',
+            content: hugeContent,
+            isBinary: false
+          })
+        });
+        assert.strictEqual(res.status, 413);
+        const data = await res.json() as { error?: string };
+        assert.strictEqual(data.error, 'Payload too large');
+      } catch (err) {
+        assert.ok(err);
+      }
+    });
+  });
+
+  describe('Health Check Privacy (Issue 20)', () => {
+    it('should return health status without leaking connected client count or server version', async () => {
+      const res = await fetch(`http://127.0.0.1:${testPort}/health`);
+      assert.strictEqual(res.status, 200);
+      const data = await res.json() as Record<string, any>;
+      assert.strictEqual(data.status, 'ok');
+      assert.strictEqual(typeof data.uptime, 'number');
+      assert.strictEqual(typeof data.time, 'number');
+      assert.strictEqual(data.connectedClients, undefined);
+      assert.strictEqual(data.version, undefined);
+    });
+  });
+
+  describe('Protocol Version Verification in Handshake (Issue 23)', () => {
+    it('should reject WebSocket client with incompatible protocol version', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${testPort}`);
+
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => {
+          const authMsg: AuthRequestMessage = {
+            id: 'auth-version-mismatch',
+            type: 'AUTH_REQUEST',
+            timestamp: Date.now(),
+            token: testToken,
+            clientId: 'client-old',
+            clientName: 'Old Client',
+            protocolVersion: '0.1.0-incompatible',
+            deviceType: 'desktop'
+          };
+          ws.send(JSON.stringify(authMsg));
+        });
+
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          assert.strictEqual(msg.type, 'AUTH_RESPONSE');
+          assert.strictEqual(msg.success, false);
+          assert.ok(msg.error?.includes('Incompatible protocol version'));
+          ws.close();
+          resolve();
+        });
+
+        ws.on('error', reject);
+      });
+    });
+  });
+
+  describe('Cryptographic UUID Event ID Generation (Issue 24)', () => {
+    it('should generate valid UUIDs for broadcast sync events', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${testPort}`);
+
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => {
+          const authMsg: AuthRequestMessage = {
+            id: 'auth-uuid-test',
+            type: 'AUTH_REQUEST',
+            timestamp: Date.now(),
+            token: testToken,
+            clientId: 'client-uuid',
+            clientName: 'UUID Test Client',
+            protocolVersion: PROTOCOL_VERSION,
+            deviceType: 'desktop'
+          };
+          ws.send(JSON.stringify(authMsg));
+        });
+
+        ws.on('message', async (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_RESPONSE') {
+            assert.strictEqual(msg.success, true);
+            const putMsg: FilePutRequestMessage = {
+              id: 'put-uuid',
+              type: 'FILE_PUT_REQUEST',
+              timestamp: Date.now(),
+              path: 'uuid-test.md',
+              content: 'UUID test content',
+              isBinary: false,
+              mtime: Date.now(),
+              hash: 'uuidhash'
+            };
+            ws.send(JSON.stringify(putMsg));
+          }
+
+          if (msg.type === 'FILE_PUT_RESPONSE') {
+            ws.close();
+            resolve();
+          }
+        });
+
+        ws.on('error', reject);
+      });
     });
   });
 });

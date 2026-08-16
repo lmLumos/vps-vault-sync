@@ -61,4 +61,23 @@ secret-*.md
     assert.strictEqual(filter.isIgnored('\\'), true);
     assert.strictEqual(filter.isIgnored('\\\\\\'), true);
   });
+
+  it('should ignore temporary files generated during atomic writes (Issue 19)', () => {
+    const filter = new IgnoreFilter();
+
+    assert.strictEqual(filter.isIgnored('note.md.tmp'), true);
+    assert.strictEqual(filter.isIgnored('note.md.tmp.1786902157401'), true);
+    assert.strictEqual(filter.isIgnored('Folder/Sub/note.md.1786902157401.tmp'), true);
+    assert.strictEqual(filter.isIgnored('Folder/Sub/note.md.tmp.99999'), true);
+    assert.strictEqual(filter.isIgnored('Folder/note.md'), false);
+  });
+
+  it('should always ignore plugin data.json and sync archives even with empty ignoredPatterns (Issue 6)', () => {
+    const filter = new IgnoreFilter({ ignoredPatterns: [], syncObsidianConfig: true });
+
+    assert.strictEqual(filter.isIgnored('.obsidian/plugins/vps-vault-sync/data.json'), true);
+    assert.strictEqual(filter.isIgnored('.git/config'), true);
+    assert.strictEqual(filter.isIgnored('.sync-archive/history/file.md'), true);
+    assert.strictEqual(filter.isIgnored('.obsidian/plugins/other-plugin/data.json'), false);
+  });
 });

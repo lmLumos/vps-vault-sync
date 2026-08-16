@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -103,6 +104,19 @@ export class VaultManager {
   }
 
   /**
+   * Computes SHA-256 hash using streams to avoid memory spikes on large files.
+   */
+  public async computeFileHash(fullFilePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const rs = fs.createReadStream(fullFilePath);
+      rs.on('data', chunk => hash.update(chunk));
+      rs.on('end', () => resolve(hash.digest('hex')));
+      rs.on('error', err => reject(err));
+    });
+  }
+
+  /**
    * Retrieves metadata for a file in the vault safely.
    */
   public async getMetadata(relativePath: string): Promise<FileMetadata | null> {
@@ -111,8 +125,7 @@ export class VaultManager {
 
     const stat = await fs.promises.stat(fullPath);
     const isBin = isBinaryFile(relativePath);
-    const buf = await fs.promises.readFile(fullPath);
-    const hash = hashBuffer(buf);
+    const hash = await this.computeFileHash(fullPath);
 
     return {
       path: relativePath,
@@ -178,8 +191,7 @@ export class VaultManager {
           try {
             const stat = await fs.promises.stat(fullPath);
             const isBin = isBinaryFile(relPath);
-            const content = await fs.promises.readFile(fullPath);
-            const hash = hashBuffer(content);
+            const hash = await this.computeFileHash(fullPath);
 
             manifest[relPath] = {
               path: relPath,
@@ -325,11 +337,16 @@ export class VaultManager {
           const existingText = existingBuf.toString('utf8');
           const incomingText = isBinary ? Buffer.from(content, 'base64').toString('utf8') : content;
 
+          // Retrieve common ancestor base from archive
+          const baseText = (await this.archiveManager.getArchivedVersion(relativePath, baseHash)) || '';
+
           // Attempt 3-way merge
-          const mergeResult = threeWayMerge('', existingText, incomingText, relativePath);
+          const mergeResult = threeWayMerge(baseText, existingText, incomingText, relativePath);
 
           if (!mergeResult.hasConflict) {
             finalContentBuf = Buffer.from(mergeResult.mergedText, 'utf8');
+            // Archive previous version before overwriting with merged content
+            await this.archiveManager.archiveVersion(fullPath, relativePath);
           } else {
             // Collision! Save incoming as conflict file and preserve existing
             conflictOccurred = true;
@@ -353,8 +370,8 @@ export class VaultManager {
       // Register with echo filter so watcher won't echo back
       this.echoFilter.recordRemoteWrite(relativePath, finalHash, clientId);
 
-      // Atomic write using temp file
-      const tmpPath = `${fullPath}.tmp.${Date.now()}`;
+      // Atomic write using temp file (ends with .tmp and matches ignore filter)
+      const tmpPath = `${fullPath}.${Date.now()}.tmp`;
       await fs.promises.writeFile(tmpPath, finalContentBuf);
       await fs.promises.rename(tmpPath, fullPath);
 

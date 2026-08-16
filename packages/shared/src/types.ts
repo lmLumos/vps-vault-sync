@@ -78,6 +78,7 @@ export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
     '**/Thumbs.db',
     '**/desktop.ini',
     '**/*.tmp',
+    '**/*.tmp.*',
     '**/*.swp',
     '**/*~',
     '.obsidian/cache/**',
