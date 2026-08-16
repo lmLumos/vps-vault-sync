@@ -381,7 +381,8 @@ export class SyncClient {
       if (exists) {
         const currentLocalText = await adapter.read(normalizedPath);
 
-        if (this.plugin.settings.conflictStrategy === 'three-way') {
+        const isMarkdown = normalizedPath.endsWith('.md') || normalizedPath.endsWith('.txt');
+        if (isMarkdown && this.plugin.settings.conflictStrategy === 'three-way') {
           const res = await this.plugin.conflictHandler.resolveTextConflict(
             normalizedPath,
             currentLocalText,

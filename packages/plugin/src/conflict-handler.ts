@@ -33,6 +33,24 @@ export class ConflictHandler {
     conflictOccurred: boolean;
     conflictFileCreated?: string;
   }> {
+    // Only perform 3-way merge on Markdown notes and text files
+    const isMarkdown = filePath.endsWith('.md') || filePath.endsWith('.txt');
+    if (!isMarkdown || filePath.startsWith('.obsidian/') || filePath.endsWith('.json')) {
+      return {
+        textToWrite: incomingRemoteText,
+        conflictOccurred: false
+      };
+    }
+
+    // If identical or empty, accept immediately
+    if (currentLocalText === incomingRemoteText || !currentLocalText) {
+      this.recordBaseSnapshot(filePath, incomingRemoteText);
+      return {
+        textToWrite: incomingRemoteText,
+        conflictOccurred: false
+      };
+    }
+
     const baseText = this.getBaseSnapshot(filePath);
 
     const mergeResult: MergeResult = threeWayMerge(

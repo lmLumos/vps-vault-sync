@@ -62,7 +62,8 @@ var require_types = __commonJS({
         "**/*.swp",
         "**/*~",
         ".obsidian/cache/**",
-        ".obsidian/workspace.json.tmp"
+        ".obsidian/workspace.json.tmp",
+        ".obsidian/plugins/vps-vault-sync/data.json"
       ]
     };
   }
@@ -2322,7 +2323,8 @@ var SyncClient = class {
       let incomingText = content;
       if (exists) {
         const currentLocalText = await adapter.read(normalizedPath);
-        if (this.plugin.settings.conflictStrategy === "three-way") {
+        const isMarkdown = normalizedPath.endsWith(".md") || normalizedPath.endsWith(".txt");
+        if (isMarkdown && this.plugin.settings.conflictStrategy === "three-way") {
           const res = await this.plugin.conflictHandler.resolveTextConflict(
             normalizedPath,
             currentLocalText,
@@ -2900,6 +2902,20 @@ var ConflictHandler = class {
    * Resolves a potentially conflicting incoming file update.
    */
   async resolveTextConflict(filePath, currentLocalText, incomingRemoteText) {
+    const isMarkdown = filePath.endsWith(".md") || filePath.endsWith(".txt");
+    if (!isMarkdown || filePath.startsWith(".obsidian/") || filePath.endsWith(".json")) {
+      return {
+        textToWrite: incomingRemoteText,
+        conflictOccurred: false
+      };
+    }
+    if (currentLocalText === incomingRemoteText || !currentLocalText) {
+      this.recordBaseSnapshot(filePath, incomingRemoteText);
+      return {
+        textToWrite: incomingRemoteText,
+        conflictOccurred: false
+      };
+    }
     const baseText = this.getBaseSnapshot(filePath);
     const mergeResult = (0, import_shared3.threeWayMerge)(
       baseText,
