@@ -399,6 +399,7 @@ export class SyncClient {
       await this.ensureParentFolder(normalizedPath);
       await adapter.write(normalizedPath, incomingText);
       this.plugin.conflictHandler.recordBaseSnapshot(normalizedPath, incomingText);
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity('download', normalizedPath, `Downloaded note (${event.type})`);
     } else {
       // Binary file
@@ -407,7 +408,31 @@ export class SyncClient {
 
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity('download', normalizedPath, `Downloaded binary asset`);
+    }
+
+    // Dynamically trigger theme or plugin reload if config files changed
+    const configPrefix = (this.app.vault.configDir || '.obsidian') + '/';
+    if (normalizedPath.startsWith('.obsidian/') || normalizedPath.startsWith(configPrefix)) {
+      try {
+        if (normalizedPath.includes('appearance.json') || normalizedPath.includes('/themes/') || normalizedPath.includes('/snippets/')) {
+          const customCss = (this.app as any).customCss;
+          if (customCss) {
+            if (typeof customCss.requestLoadTheme === 'function') customCss.requestLoadTheme();
+            if (typeof customCss.requestLoadSnippets === 'function') customCss.requestLoadSnippets();
+            if (typeof customCss.loadTheme === 'function') customCss.loadTheme();
+          }
+        }
+        if (normalizedPath.includes('/plugins/') || normalizedPath.includes('community-plugins.json')) {
+          const plugins = (this.app as any).plugins;
+          if (plugins && typeof plugins.loadManifests === 'function') {
+            plugins.loadManifests();
+          }
+        }
+      } catch {
+        // ignore internal API differences across Obsidian versions
+      }
     }
   }
 
@@ -668,6 +693,9 @@ export class SyncClient {
     };
 
     await scanDir('');
+    if (this.plugin.settings.syncObsidianConfig) {
+      await scanDir(this.app.vault.configDir || '.obsidian');
+    }
     return manifest;
   }
 }

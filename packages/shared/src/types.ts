@@ -79,6 +79,7 @@ export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
     '**/*.swp',
     '**/*~',
     '.obsidian/cache/**',
-    '.obsidian/workspace.json.tmp'
+    '.obsidian/workspace.json.tmp',
+    '.obsidian/plugins/vps-vault-sync/data.json'
   ]
 };

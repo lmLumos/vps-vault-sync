@@ -2338,13 +2338,38 @@ var SyncClient = class {
       await this.ensureParentFolder(normalizedPath);
       await adapter.write(normalizedPath, incomingText);
       this.plugin.conflictHandler.recordBaseSnapshot(normalizedPath, incomingText);
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity("download", normalizedPath, `Downloaded note (${event.type})`);
     } else {
       const buf = Buffer.from(content, "base64");
       const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity("download", normalizedPath, `Downloaded binary asset`);
+    }
+    const configPrefix = (this.app.vault.configDir || ".obsidian") + "/";
+    if (normalizedPath.startsWith(".obsidian/") || normalizedPath.startsWith(configPrefix)) {
+      try {
+        if (normalizedPath.includes("appearance.json") || normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
+          const customCss = this.app.customCss;
+          if (customCss) {
+            if (typeof customCss.requestLoadTheme === "function")
+              customCss.requestLoadTheme();
+            if (typeof customCss.requestLoadSnippets === "function")
+              customCss.requestLoadSnippets();
+            if (typeof customCss.loadTheme === "function")
+              customCss.loadTheme();
+          }
+        }
+        if (normalizedPath.includes("/plugins/") || normalizedPath.includes("community-plugins.json")) {
+          const plugins = this.app.plugins;
+          if (plugins && typeof plugins.loadManifests === "function") {
+            plugins.loadManifests();
+          }
+        }
+      } catch {
+      }
     }
   }
   async applyRemoteFileDelete(event) {
@@ -2567,6 +2592,9 @@ var SyncClient = class {
       }
     };
     await scanDir("");
+    if (this.plugin.settings.syncObsidianConfig) {
+      await scanDir(this.app.vault.configDir || ".obsidian");
+    }
     return manifest;
   }
 };
@@ -2582,10 +2610,14 @@ var VaultWatcher = class {
     // path -> expiresAt
     this.obsidianConfigHashes = /* @__PURE__ */ new Map();
     // path -> last hash for .obsidian files
+    this.initialConfigScanned = false;
     this.configPollInterval = null;
     this.app = app;
     this.plugin = plugin;
     this.ignoreFilter = ignoreFilter;
+  }
+  recordConfigHash(path, hash) {
+    this.obsidianConfigHashes.set(path.replace(/\\/g, "/"), hash);
   }
   start() {
     this.eventRefs.push(
@@ -2746,7 +2778,7 @@ var VaultWatcher = class {
       return;
     this.configPollInterval = window.setInterval(async () => {
       await this.scanObsidianConfigFolder();
-    }, 15e3);
+    }, 2500);
     this.scanObsidianConfigFolder();
   }
   async scanObsidianConfigFolder() {
@@ -2755,6 +2787,7 @@ var VaultWatcher = class {
     try {
       const adapter = this.app.vault.adapter;
       const configDir = this.app.vault.configDir || ".obsidian";
+      const seenConfigPaths = /* @__PURE__ */ new Set();
       const scanSubDir = async (dir) => {
         const listing = await adapter.list(dir);
         for (const filePath of listing.files) {
@@ -2763,6 +2796,7 @@ var VaultWatcher = class {
             continue;
           if (this.isSuppressed(normalized))
             continue;
+          seenConfigPaths.add(normalized);
           try {
             const isBin = (0, import_shared2.isBinaryFile)(normalized);
             let contentStr;
@@ -2794,6 +2828,22 @@ var VaultWatcher = class {
               await this.plugin.syncClient.onLocalSyncEvent(event, contentStr);
             } else if (previousHash === void 0) {
               this.obsidianConfigHashes.set(normalized, currentHash);
+              if (this.initialConfigScanned) {
+                const stat = await adapter.stat(normalized);
+                const event = {
+                  id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                  clientId: this.plugin.settings.clientId,
+                  timestamp: Date.now(),
+                  type: "create",
+                  path: normalized,
+                  hash: currentHash,
+                  mtime: stat?.mtime || Date.now(),
+                  size: stat?.size || contentStr.length,
+                  isBinary: isBin,
+                  content: contentStr
+                };
+                await this.plugin.syncClient.onLocalSyncEvent(event, contentStr);
+              }
             }
           } catch {
           }
@@ -2806,6 +2856,22 @@ var VaultWatcher = class {
         }
       };
       await scanSubDir(configDir);
+      if (this.initialConfigScanned) {
+        for (const [trackedPath] of this.obsidianConfigHashes.entries()) {
+          if (!seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
+            this.obsidianConfigHashes.delete(trackedPath);
+            const deleteEvent = {
+              id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              clientId: this.plugin.settings.clientId,
+              timestamp: Date.now(),
+              type: "delete",
+              path: trackedPath
+            };
+            await this.plugin.syncClient.onLocalSyncEvent(deleteEvent);
+          }
+        }
+      }
+      this.initialConfigScanned = true;
     } catch (err) {
       console.error("[VaultWatcher] Error scanning .obsidian folder:", err);
     }

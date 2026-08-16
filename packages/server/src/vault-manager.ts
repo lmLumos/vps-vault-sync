@@ -233,8 +233,10 @@ export class VaultManager {
         const existingBuf = await fs.promises.readFile(fullPath);
         const existingHash = hashBuffer(existingBuf);
 
+        const isConfigFile = relativePath.startsWith('.obsidian/') || relativePath.endsWith('.json');
+
         // Check if 3-way merge is needed
-        if (!isBinary && baseHash && existingHash !== baseHash) {
+        if (!isBinary && !isConfigFile && baseHash && existingHash !== baseHash) {
           // File was modified on server concurrently!
           const existingText = existingBuf.toString('utf8');
           const incomingText = isBinary ? Buffer.from(content, 'base64').toString('utf8') : content;

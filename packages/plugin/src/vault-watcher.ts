@@ -19,7 +19,12 @@ export class VaultWatcher {
   private debounceTimers = new Map<string, number>();
   private localSuppressions = new Map<string, number>(); // path -> expiresAt
   private obsidianConfigHashes = new Map<string, string>(); // path -> last hash for .obsidian files
+  private initialConfigScanned = false;
   private configPollInterval: number | null = null;
+
+  public recordConfigHash(path: string, hash: string): void {
+    this.obsidianConfigHashes.set(path.replace(/\\/g, '/'), hash);
+  }
 
   constructor(app: App, plugin: VPSVaultSyncPlugin, ignoreFilter: IgnoreFilter) {
     this.app = app;
@@ -204,10 +209,10 @@ export class VaultWatcher {
   private startObsidianConfigPoller(): void {
     if (this.configPollInterval !== null) return;
 
-    // Scan every 15 seconds for plugin/theme/setting updates
+    // Scan every 2.5 seconds for plugin/theme/setting updates
     this.configPollInterval = window.setInterval(async () => {
       await this.scanObsidianConfigFolder();
-    }, 15000);
+    }, 2500);
 
     // Initial scan
     this.scanObsidianConfigFolder();
@@ -219,6 +224,7 @@ export class VaultWatcher {
     try {
       const adapter = this.app.vault.adapter;
       const configDir = this.app.vault.configDir || '.obsidian';
+      const seenConfigPaths = new Set<string>();
 
       const scanSubDir = async (dir: string) => {
         const listing = await adapter.list(dir);
@@ -227,6 +233,8 @@ export class VaultWatcher {
           const normalized = filePath.replace(/\\/g, '/');
           if (this.ignoreFilter.isIgnored(normalized)) continue;
           if (this.isSuppressed(normalized)) continue;
+
+          seenConfigPaths.add(normalized);
 
           try {
             const isBin = isBinaryFile(normalized);
@@ -264,6 +272,25 @@ export class VaultWatcher {
               await this.plugin.syncClient.onLocalSyncEvent(event, contentStr);
             } else if (previousHash === undefined) {
               this.obsidianConfigHashes.set(normalized, currentHash);
+
+              if (this.initialConfigScanned) {
+                // New theme, plugin, or snippet created after startup!
+                const stat = await adapter.stat(normalized);
+                const event: FileCreateOrModifyEvent = {
+                  id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                  clientId: this.plugin.settings.clientId,
+                  timestamp: Date.now(),
+                  type: 'create',
+                  path: normalized,
+                  hash: currentHash,
+                  mtime: stat?.mtime || Date.now(),
+                  size: stat?.size || contentStr.length,
+                  isBinary: isBin,
+                  content: contentStr
+                };
+
+                await this.plugin.syncClient.onLocalSyncEvent(event, contentStr);
+              }
             }
           } catch {
             // ignore temporary read locks
@@ -279,6 +306,25 @@ export class VaultWatcher {
       };
 
       await scanSubDir(configDir);
+
+      // Check for deleted config files
+      if (this.initialConfigScanned) {
+        for (const [trackedPath] of this.obsidianConfigHashes.entries()) {
+          if (!seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
+            this.obsidianConfigHashes.delete(trackedPath);
+            const deleteEvent: FileDeleteEvent = {
+              id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              clientId: this.plugin.settings.clientId,
+              timestamp: Date.now(),
+              type: 'delete',
+              path: trackedPath
+            };
+            await this.plugin.syncClient.onLocalSyncEvent(deleteEvent);
+          }
+        }
+      }
+
+      this.initialConfigScanned = true;
     } catch (err) {
       console.error('[VaultWatcher] Error scanning .obsidian folder:', err);
     }
