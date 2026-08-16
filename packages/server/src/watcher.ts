@@ -1,4 +1,5 @@
 import chokidar from 'chokidar';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import EventEmitter from 'events';
@@ -110,7 +111,7 @@ export class VaultWatcher extends EventEmitter {
           : undefined;
 
         const event: FileCreateOrModifyEvent = {
-          id: `srv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          id: `srv-${crypto.randomUUID()}`,
           clientId: 'server',
           timestamp: Date.now(),
           type,
@@ -142,7 +143,7 @@ export class VaultWatcher extends EventEmitter {
     }
 
     const event: FileDeleteEvent = {
-      id: `srv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      id: `srv-${crypto.randomUUID()}`,
       clientId: 'server',
       timestamp: Date.now(),
       type: 'delete',

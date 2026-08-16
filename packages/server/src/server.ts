@@ -1,4 +1,5 @@
 import http from 'http';
+import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   AuthRequestMessage,
@@ -24,6 +25,87 @@ import { ServerConfig } from './config';
 import { VaultManager } from './vault-manager';
 import { VaultWatcher } from './watcher';
 
+export function timingSafeCompare(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) {
+    // Perform dummy comparison against itself to avoid leaking timing info about length
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+interface RateLimitRecord {
+  count: number;
+  firstAttempt: number;
+  lastAttempt: number;
+  blockedUntil?: number;
+}
+
+export class AuthRateLimiter {
+  private attempts = new Map<string, RateLimitRecord>();
+  private readonly maxAttempts: number;
+  private readonly windowMs: number;
+  private readonly blockDurationMs: number;
+
+  constructor(maxAttempts = 5, windowMs = 60000, blockDurationMs = 60000) {
+    this.maxAttempts = maxAttempts;
+    this.windowMs = windowMs;
+    this.blockDurationMs = blockDurationMs;
+  }
+
+  public isBlocked(ip: string): boolean {
+    const record = this.attempts.get(ip);
+    if (!record) return false;
+    const now = Date.now();
+    if (record.blockedUntil && now < record.blockedUntil) {
+      return true;
+    }
+    if (now - record.firstAttempt > this.windowMs && (!record.blockedUntil || now >= record.blockedUntil)) {
+      this.attempts.delete(ip);
+      return false;
+    }
+    return false;
+  }
+
+  public recordFailure(ip: string): void {
+    const now = Date.now();
+    let record = this.attempts.get(ip);
+    if (!record || now - record.firstAttempt > this.windowMs) {
+      record = { count: 1, firstAttempt: now, lastAttempt: now };
+      this.attempts.set(ip, record);
+    } else {
+      record.count += 1;
+      record.lastAttempt = now;
+    }
+
+    if (record.count >= this.maxAttempts) {
+      record.blockedUntil = now + this.blockDurationMs;
+    }
+  }
+
+  public recordSuccess(ip: string): void {
+    this.attempts.delete(ip);
+  }
+
+  public reset(): void {
+    this.attempts.clear();
+  }
+}
+
+function getClientIp(req: http.IncomingMessage | { headers: http.IncomingHttpHeaders; socket?: { remoteAddress?: string } }): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].trim();
+  }
+  return req.socket?.remoteAddress || '127.0.0.1';
+}
+
 interface ClientSession {
   clientId: string;
   clientName: string;
@@ -32,6 +114,8 @@ interface ClientSession {
   authenticated: boolean;
   connectedAt: number;
   lastPing: number;
+  ip: string;
+  authTimeout: NodeJS.Timeout | null;
 }
 
 export class SyncServer {
@@ -42,25 +126,36 @@ export class SyncServer {
   private wss: WebSocketServer;
   private clients = new Map<WebSocket, ClientSession>();
   private pingInterval: NodeJS.Timeout | null = null;
+  private rateLimiter: AuthRateLimiter;
 
   constructor(
     config: ServerConfig,
     vaultManager: VaultManager,
-    vaultWatcher: VaultWatcher
+    vaultWatcher: VaultWatcher,
+    rateLimiter?: AuthRateLimiter
   ) {
     this.config = config;
     this.vaultManager = vaultManager;
     this.vaultWatcher = vaultWatcher;
+    this.rateLimiter = rateLimiter || new AuthRateLimiter();
 
     this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
-    this.wss = new WebSocketServer({ server: this.httpServer });
+    this.wss = new WebSocketServer({
+      server: this.httpServer,
+      maxPayload: 25 * 1024 * 1024 // 25 MB WebSocket payload limit (Issue 9)
+    });
 
     this.setupWebSocketServer();
     this.setupVaultWatcherEvents();
   }
 
+  public getRateLimiter(): AuthRateLimiter {
+    return this.rateLimiter;
+  }
+
   private setupWebSocketServer(): void {
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+      const ip = getClientIp(req);
       const session: ClientSession = {
         clientId: '',
         clientName: 'Unknown',
@@ -68,11 +163,30 @@ export class SyncServer {
         ws,
         authenticated: false,
         connectedAt: Date.now(),
-        lastPing: Date.now()
+        lastPing: Date.now(),
+        ip,
+        authTimeout: null
       };
+
+      // 10-second authentication timeout (Issue 9)
+      session.authTimeout = setTimeout(() => {
+        if (!session.authenticated && ws.readyState === WebSocket.OPEN) {
+          console.warn(`[SyncServer] Client from ${ip} failed to authenticate within 10s timeout`);
+          this.sendMessage(ws, {
+            id: `err-${crypto.randomUUID()}`,
+            type: 'ERROR_NOTIFICATION',
+            timestamp: Date.now(),
+            code: 'AUTH_TIMEOUT',
+            message: 'Authentication timeout: failed to authenticate within 10 seconds'
+          });
+          ws.close(4001, 'Authentication timeout');
+          this.clients.delete(ws);
+        }
+      }, 10000);
+
       this.clients.set(ws, session);
 
-      console.log(`[SyncServer] New WebSocket connection from client`);
+      console.log(`[SyncServer] New WebSocket connection from client at ${ip}`);
 
       ws.on('message', async (data: Buffer | string) => {
         try {
@@ -82,7 +196,7 @@ export class SyncServer {
         } catch (err) {
           console.error('[SyncServer] Error processing message:', err);
           this.sendMessage(ws, {
-            id: `err-${Date.now()}`,
+            id: `err-${crypto.randomUUID()}`,
             type: 'ERROR_NOTIFICATION',
             timestamp: Date.now(),
             code: 'INVALID_PAYLOAD',
@@ -103,6 +217,10 @@ export class SyncServer {
       });
 
       ws.on('close', () => {
+        if (session.authTimeout) {
+          clearTimeout(session.authTimeout);
+          session.authTimeout = null;
+        }
         if (session.authenticated) {
           console.log(`[SyncServer] Client disconnected: ${session.clientName} (${session.clientId})`);
         }
@@ -148,8 +266,47 @@ export class SyncServer {
     // 1. Authentication
     if (message.type === 'AUTH_REQUEST') {
       const authReq = message as AuthRequestMessage;
-      if (authReq.token !== this.config.syncToken) {
-        console.warn(`[SyncServer] Auth failed for client: ${authReq.clientName} (${authReq.clientId})`);
+
+      // Rate limit check (Issue 4)
+      if (this.rateLimiter.isBlocked(session.ip)) {
+        console.warn(`[SyncServer] Auth blocked by rate limiter for IP: ${session.ip}`);
+        const resp: AuthResponseMessage = {
+          id: message.id,
+          type: 'AUTH_RESPONSE',
+          timestamp: Date.now(),
+          success: false,
+          serverVersion: PROTOCOL_VERSION,
+          serverTime: Date.now(),
+          vaultName: 'Obsidian Vault',
+          error: 'Too many failed authentication attempts. Please try again later.'
+        };
+        this.sendMessage(ws, resp);
+        ws.close(4001, 'Rate limit exceeded');
+        return;
+      }
+
+      // Protocol version verification (Issue 23)
+      if (!authReq.protocolVersion || authReq.protocolVersion !== PROTOCOL_VERSION) {
+        console.warn(`[SyncServer] Incompatible protocol version from client: ${authReq.protocolVersion} (expected ${PROTOCOL_VERSION})`);
+        const resp: AuthResponseMessage = {
+          id: message.id,
+          type: 'AUTH_RESPONSE',
+          timestamp: Date.now(),
+          success: false,
+          serverVersion: PROTOCOL_VERSION,
+          serverTime: Date.now(),
+          vaultName: 'Obsidian Vault',
+          error: `Incompatible protocol version: client is on ${authReq.protocolVersion || 'unknown'}, server requires ${PROTOCOL_VERSION}`
+        };
+        this.sendMessage(ws, resp);
+        ws.close(4002, 'Incompatible protocol version');
+        return;
+      }
+
+      // Timing-safe token comparison (Issue 4)
+      if (!timingSafeCompare(authReq.token, this.config.syncToken)) {
+        this.rateLimiter.recordFailure(session.ip);
+        console.warn(`[SyncServer] Auth failed for client: ${authReq.clientName} (${authReq.clientId}) from ${session.ip}`);
         const resp: AuthResponseMessage = {
           id: message.id,
           type: 'AUTH_RESPONSE',
@@ -163,6 +320,13 @@ export class SyncServer {
         this.sendMessage(ws, resp);
         ws.close(4001, 'Unauthorized');
         return;
+      }
+
+      // Auth successful: clear rate limiter record and cancel timeout
+      this.rateLimiter.recordSuccess(session.ip);
+      if (session.authTimeout) {
+        clearTimeout(session.authTimeout);
+        session.authTimeout = null;
       }
 
       session.authenticated = true;
@@ -285,7 +449,7 @@ export class SyncServer {
 
         // Broadcast file change to other connected clients
         const event: FileCreateOrModifyEvent = {
-          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          id: `evt-${crypto.randomUUID()}`,
           clientId: session.clientId,
           timestamp: Date.now(),
           type: 'modify',
@@ -417,7 +581,7 @@ export class SyncServer {
 
   public broadcastSyncEvent(event: SyncEvent, excludeClientId?: string): void {
     const message: SyncEventMessage = {
-      id: `bc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: `bc-${crypto.randomUUID()}`,
       type: 'SYNC_EVENT',
       timestamp: Date.now(),
       event
@@ -443,10 +607,18 @@ export class SyncServer {
   private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    // CORS headers (Restricted - Issue 5)
+    const origin = req.headers.origin;
+    if (origin) {
+      const isAllowed = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin) ||
+                        origin === 'app://obsidian.md' ||
+                        origin === 'capacitor://localhost';
+      if (isAllowed) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-ID');
+      }
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -454,15 +626,23 @@ export class SyncServer {
       return;
     }
 
-    // Health check endpoint
+    // Health check endpoint (Issue 20: Do not leak connected client count or sensitive state)
     if (url.pathname === '/health' || url.pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'ok',
-        version: PROTOCOL_VERSION,
-        connectedClients: Array.from(this.clients.values()).filter(c => c.authenticated).length,
+        uptime: Math.floor(process.uptime()),
         time: Date.now()
       }));
+      return;
+    }
+
+    const clientIp = getClientIp(req);
+
+    // Rate limit check (Issue 4)
+    if (this.rateLimiter.isBlocked(clientIp)) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+      res.end(JSON.stringify({ error: 'Too many failed authentication attempts. Please try again later.' }));
       return;
     }
 
@@ -471,11 +651,15 @@ export class SyncServer {
     const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
     const token = bearerMatch ? bearerMatch[1].trim() : '';
 
-    if (!token || token !== this.config.syncToken) {
+    if (!token || !timingSafeCompare(token, this.config.syncToken)) {
+      this.rateLimiter.recordFailure(clientIp);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
       return;
     }
+
+    // Auth succeeded, reset failure record for IP
+    this.rateLimiter.recordSuccess(clientIp);
 
     // GET /api/manifest
     if (url.pathname === '/api/manifest' && req.method === 'GET') {
@@ -518,20 +702,29 @@ export class SyncServer {
       return;
     }
 
-    // POST /api/file
+    // POST /api/file (Issue 10: Byte size tracking and race-free error handling)
     if (url.pathname === '/api/file' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk;
-        if (body.length > this.config.maxFileSizeBytes) {
+      const chunks: Buffer[] = [];
+      let receivedBytes = 0;
+      let aborted = false;
+
+      req.on('data', (chunk: Buffer) => {
+        if (aborted) return;
+        receivedBytes += chunk.length;
+        if (receivedBytes > this.config.maxFileSizeBytes) {
+          aborted = true;
           res.writeHead(413, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Payload too large' }));
           req.destroy();
+          return;
         }
+        chunks.push(chunk);
       });
 
       req.on('end', async () => {
+        if (aborted) return;
         try {
+          const body = Buffer.concat(chunks).toString('utf8');
           const payload = JSON.parse(body);
           const clientId = (req.headers['x-client-id'] as string) || 'http-client';
           const result = await this.vaultManager.writeFile(
@@ -546,8 +739,10 @@ export class SyncServer {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, metadata: result.metadata, conflictOccurred: result.conflictOccurred }));
         } catch (err) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Write failed' }));
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Write failed' }));
+          }
         }
       });
       return;
@@ -567,6 +762,12 @@ export class SyncServer {
         console.log(`   Vault Path:  ${this.config.vaultPath}`);
         console.log(`   Retention:   ${this.config.archiveRetentionDays} days`);
         console.log(`=======================================================\x1b[0m\n`);
+
+        if (this.config.host === '0.0.0.0' || this.config.host === '::') {
+          console.warn(`\x1b[33m[SECURITY NOTICE] Server listening on public interface (${this.config.host}) with unencrypted HTTP/WS.`);
+          console.warn(`[SECURITY NOTICE] For production use, place this server behind a TLS-terminating reverse proxy (e.g. Caddy, Nginx, Cloudflare Tunnel) to enforce HTTPS/WSS encryption.\x1b[0m\n`);
+        }
+
         resolve();
       });
     });
@@ -578,7 +779,11 @@ export class SyncServer {
       this.pingInterval = null;
     }
     return new Promise((resolve) => {
-      for (const [ws] of this.clients.entries()) {
+      for (const [ws, session] of this.clients.entries()) {
+        if (session.authTimeout) {
+          clearTimeout(session.authTimeout);
+          session.authTimeout = null;
+        }
         ws.close(1000, 'Server stopping');
       }
       this.wss.close(() => {
