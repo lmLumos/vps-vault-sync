@@ -373,7 +373,18 @@ export class SyncServer {
           // Broadcast deletion
           this.broadcastSyncEvent(event, session.clientId);
         } else if (event.type === 'rename') {
-          await this.vaultManager.renameFile(event.oldPath, event.newPath, session.clientId);
+          const renameSuccess = await this.vaultManager.renameFile(event.oldPath, event.newPath, session.clientId);
+          if (!renameSuccess && event.content !== undefined) {
+            // If old path was never on server, write the new file directly
+            await this.vaultManager.writeFile(
+              event.newPath,
+              event.content,
+              event.isBinary || false,
+              event.mtime || Date.now(),
+              session.clientId
+            );
+          }
+
           const ack: SyncEventAckMessage = {
             id: message.id,
             type: 'SYNC_EVENT_ACK',

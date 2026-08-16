@@ -41,6 +41,8 @@ export interface FileRenameEvent extends BaseSyncEvent {
   newPath: string;
   hash: string;
   mtime: number;
+  content?: string;
+  isBinary?: boolean;
 }
 
 export type SyncEvent = FileCreateOrModifyEvent | FileDeleteEvent | FileRenameEvent;

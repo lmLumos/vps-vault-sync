@@ -122,6 +122,7 @@ export class VaultWatcher {
     if (this.ignoreFilter.isIgnored(file.path) && this.ignoreFilter.isIgnored(oldPath)) return;
 
     const isBin = isBinaryFile(file.path);
+    let content = '';
     let hash = '';
     let mtime = Date.now();
 
@@ -129,10 +130,11 @@ export class VaultWatcher {
       mtime = file.stat.mtime;
       if (isBin) {
         const buf = await this.app.vault.readBinary(file);
+        content = Buffer.from(buf).toString('base64');
         hash = hashBuffer(buf);
       } else {
-        const text = await this.app.vault.read(file);
-        hash = hashString(text);
+        content = await this.app.vault.read(file);
+        hash = hashString(content);
       }
     }
 
@@ -144,10 +146,12 @@ export class VaultWatcher {
       oldPath,
       newPath: file.path,
       hash,
-      mtime
+      mtime,
+      content: content.length < 500 * 1024 ? content : undefined,
+      isBinary: isBin
     };
 
-    await this.plugin.syncClient.onLocalSyncEvent(event);
+    await this.plugin.syncClient.onLocalSyncEvent(event, content);
   }
 
   private async scheduleFileChange(type: 'create' | 'modify', path: string): Promise<void> {

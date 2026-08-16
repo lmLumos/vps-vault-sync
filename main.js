@@ -2234,6 +2234,29 @@ var SyncClient = class {
     }
     this.pendingRequests.clear();
   }
+  isConnected() {
+    return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+  }
+  async processOfflineQueue() {
+    if (!this.isConnected())
+      return;
+    const queue = this.plugin.offlineQueue.getQueue();
+    if (!queue || queue.length === 0)
+      return;
+    this.logActivity("info", "", `Processing ${queue.length} offline queued items...`);
+    const remaining = [];
+    for (const event of queue) {
+      try {
+        await this.onLocalSyncEvent(event);
+      } catch {
+        remaining.push(event);
+      }
+    }
+    this.plugin.offlineQueue.clear();
+    for (const item of remaining) {
+      await this.plugin.offlineQueue.enqueue(item);
+    }
+  }
   send(message) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
@@ -2266,6 +2289,7 @@ var SyncClient = class {
           this.logActivity("info", "", `Connected and authenticated with ${resp.vaultName}`);
           this.setStatus("reconciling");
           await this.reconcileVault();
+          await this.processOfflineQueue();
         } else {
           this.setStatus("error", resp.error || "Auth failed");
           this.logActivity("error", "", `Authentication error: ${resp.error}`);
@@ -2704,16 +2728,18 @@ var VaultWatcher = class {
     if (this.ignoreFilter.isIgnored(file.path) && this.ignoreFilter.isIgnored(oldPath))
       return;
     const isBin = (0, import_shared2.isBinaryFile)(file.path);
+    let content = "";
     let hash = "";
     let mtime = Date.now();
     if (file instanceof import_obsidian3.TFile) {
       mtime = file.stat.mtime;
       if (isBin) {
         const buf = await this.app.vault.readBinary(file);
+        content = Buffer.from(buf).toString("base64");
         hash = (0, import_shared2.hashBuffer)(buf);
       } else {
-        const text = await this.app.vault.read(file);
-        hash = (0, import_shared2.hashString)(text);
+        content = await this.app.vault.read(file);
+        hash = (0, import_shared2.hashString)(content);
       }
     }
     const event = {
@@ -2724,9 +2750,11 @@ var VaultWatcher = class {
       oldPath,
       newPath: file.path,
       hash,
-      mtime
+      mtime,
+      content: content.length < 500 * 1024 ? content : void 0,
+      isBinary: isBin
     };
-    await this.plugin.syncClient.onLocalSyncEvent(event);
+    await this.plugin.syncClient.onLocalSyncEvent(event, content);
   }
   async scheduleFileChange(type, path) {
     if (this.debounceTimers.has(path)) {
@@ -3194,6 +3222,23 @@ var VPSVaultSyncPlugin = class extends import_obsidian6.Plugin {
         this.syncClient.connect();
       });
     }
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.visibilityState === "visible" && this.settings.liveSyncEnabled) {
+        if (!this.syncClient.isConnected()) {
+          this.syncClient.connect();
+        }
+      }
+    });
+    this.registerDomEvent(window, "focus", () => {
+      if (this.settings.liveSyncEnabled && !this.syncClient.isConnected()) {
+        this.syncClient.connect();
+      }
+    });
+    this.registerDomEvent(window, "online", () => {
+      if (this.settings.liveSyncEnabled) {
+        this.syncClient.reconnect();
+      }
+    });
     console.log("[VPS Vault Sync] Plugin initialized successfully.");
   }
   onunload() {

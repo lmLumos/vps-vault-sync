@@ -272,6 +272,32 @@ export class SyncClient {
     this.pendingRequests.clear();
   }
 
+  public isConnected(): boolean {
+    return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+  }
+
+  public async processOfflineQueue(): Promise<void> {
+    if (!this.isConnected()) return;
+    const queue = this.plugin.offlineQueue.getQueue();
+    if (!queue || queue.length === 0) return;
+
+    this.logActivity('info', '', `Processing ${queue.length} offline queued items...`);
+    const remaining: SyncEvent[] = [];
+
+    for (const event of queue) {
+      try {
+        await this.onLocalSyncEvent(event);
+      } catch {
+        remaining.push(event);
+      }
+    }
+
+    this.plugin.offlineQueue.clear();
+    for (const item of remaining) {
+      await this.plugin.offlineQueue.enqueue(item);
+    }
+  }
+
   public send(message: WebSocketMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
@@ -310,6 +336,7 @@ export class SyncClient {
           this.logActivity('info', '', `Connected and authenticated with ${resp.vaultName}`);
           this.setStatus('reconciling');
           await this.reconcileVault();
+          await this.processOfflineQueue();
         } else {
           this.setStatus('error', resp.error || 'Auth failed');
           this.logActivity('error', '', `Authentication error: ${resp.error}`);

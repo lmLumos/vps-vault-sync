@@ -104,6 +104,27 @@ export default class VPSVaultSyncPlugin extends Plugin {
       });
     }
 
+    // Register Mobile resume / network reconnect listeners
+    this.registerDomEvent(document, 'visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.settings.liveSyncEnabled) {
+        if (!this.syncClient.isConnected()) {
+          this.syncClient.connect();
+        }
+      }
+    });
+
+    this.registerDomEvent(window, 'focus', () => {
+      if (this.settings.liveSyncEnabled && !this.syncClient.isConnected()) {
+        this.syncClient.connect();
+      }
+    });
+
+    this.registerDomEvent(window, 'online', () => {
+      if (this.settings.liveSyncEnabled) {
+        this.syncClient.reconnect();
+      }
+    });
+
     console.log('[VPS Vault Sync] Plugin initialized successfully.');
   }
 
