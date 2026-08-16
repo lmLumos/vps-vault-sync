@@ -27,7 +27,7 @@ export class VaultManager {
     echoFilter: EchoFilter,
     ignoreFilter: IgnoreFilter
   ) {
-    this.vaultPath = vaultPath;
+    this.vaultPath = path.resolve(vaultPath);
     this.archiveManager = archiveManager;
     this.echoFilter = echoFilter;
     this.ignoreFilter = ignoreFilter;
@@ -41,13 +41,97 @@ export class VaultManager {
     }
   }
 
+  /**
+   * Safely resolves a relative path to an absolute path within the vault root.
+   * Throws an error if directory traversal is attempted.
+   */
   public getAbsolutePath(relativePath: string): string {
-    return path.join(this.vaultPath, ...relativePath.split('/'));
+    if (typeof relativePath !== 'string') {
+      throw new Error('Security Error: Invalid path');
+    }
+
+    if (relativePath.includes('\0')) {
+      throw new Error('Security Error: Directory traversal attempt blocked');
+    }
+
+    // Check for URI-encoded traversal attempts (e.g. %2e%2e)
+    try {
+      const decoded = decodeURIComponent(relativePath);
+      if (decoded !== relativePath) {
+        const decodedResolved = path.resolve(this.vaultPath, decoded);
+        const rootWithSep = this.vaultPath.endsWith(path.sep) ? this.vaultPath : this.vaultPath + path.sep;
+        const isDecodedContained = process.platform === 'win32'
+          ? (decodedResolved.toLowerCase() === this.vaultPath.toLowerCase() || decodedResolved.toLowerCase().startsWith(rootWithSep.toLowerCase()))
+          : (decodedResolved === this.vaultPath || decodedResolved.startsWith(rootWithSep));
+        if (!isDecodedContained) {
+          throw new Error('Security Error: Directory traversal attempt blocked');
+        }
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('Security Error')) {
+        throw err;
+      }
+    }
+
+    const resolved = path.resolve(this.vaultPath, relativePath);
+    const rootWithSep = this.vaultPath.endsWith(path.sep) ? this.vaultPath : this.vaultPath + path.sep;
+
+    const isContained = process.platform === 'win32'
+      ? (resolved.toLowerCase() === this.vaultPath.toLowerCase() || resolved.toLowerCase().startsWith(rootWithSep.toLowerCase()))
+      : (resolved === this.vaultPath || resolved.startsWith(rootWithSep));
+
+    if (!isContained) {
+      throw new Error('Security Error: Directory traversal attempt blocked');
+    }
+
+    return resolved;
   }
 
   public getRelativePath(absolutePath: string): string {
-    const rel = path.relative(this.vaultPath, absolutePath);
+    const resolved = path.resolve(absolutePath);
+    const rootWithSep = this.vaultPath.endsWith(path.sep) ? this.vaultPath : this.vaultPath + path.sep;
+    const isContained = process.platform === 'win32'
+      ? (resolved.toLowerCase() === this.vaultPath.toLowerCase() || resolved.toLowerCase().startsWith(rootWithSep.toLowerCase()))
+      : (resolved === this.vaultPath || resolved.startsWith(rootWithSep));
+
+    if (!isContained) {
+      throw new Error('Security Error: Directory traversal attempt blocked');
+    }
+
+    const rel = path.relative(this.vaultPath, resolved);
     return rel.replace(/\\/g, '/');
+  }
+
+  /**
+   * Retrieves metadata for a file in the vault safely.
+   */
+  public async getMetadata(relativePath: string): Promise<FileMetadata | null> {
+    const fullPath = this.getAbsolutePath(relativePath);
+    if (!fs.existsSync(fullPath)) return null;
+
+    const stat = await fs.promises.stat(fullPath);
+    const isBin = isBinaryFile(relativePath);
+    const buf = await fs.promises.readFile(fullPath);
+    const hash = hashBuffer(buf);
+
+    return {
+      path: relativePath,
+      hash,
+      mtime: stat.mtimeMs,
+      size: stat.size,
+      isBinary: isBin
+    };
+  }
+
+  /**
+   * Ensures that a directory within the vault exists safely.
+   */
+  public async ensureDirectory(relativePath: string): Promise<string> {
+    const fullPath = this.getAbsolutePath(relativePath);
+    if (!fs.existsSync(fullPath)) {
+      await fs.promises.mkdir(fullPath, { recursive: true });
+    }
+    return fullPath;
   }
 
   private async acquireLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
@@ -312,7 +396,7 @@ export class VaultManager {
   }
 
   /**
-   * Renames/moves a file in the vault.
+   * Renames/moves a file in the vault with strict path validation on both old and new paths.
    */
   public async renameFile(oldRelativePath: string, newRelativePath: string, clientId: string): Promise<boolean> {
     const oldFullPath = this.getAbsolutePath(oldRelativePath);
@@ -320,15 +404,21 @@ export class VaultManager {
 
     if (!fs.existsSync(oldFullPath)) return false;
 
-    const newDir = path.dirname(newFullPath);
-    if (!fs.existsSync(newDir)) {
-      await fs.promises.mkdir(newDir, { recursive: true });
-    }
+    return this.acquireLock(oldRelativePath, async () => {
+      return this.acquireLock(newRelativePath, async () => {
+        if (!fs.existsSync(oldFullPath)) return false;
 
-    this.echoFilter.recordRemoteWrite(oldRelativePath, '__RENAMED__', clientId);
-    this.echoFilter.recordRemoteWrite(newRelativePath, '__RENAMED__', clientId);
+        const newDir = path.dirname(newFullPath);
+        if (!fs.existsSync(newDir)) {
+          await fs.promises.mkdir(newDir, { recursive: true });
+        }
 
-    await fs.promises.rename(oldFullPath, newFullPath);
-    return true;
+        this.echoFilter.recordRemoteWrite(oldRelativePath, '__RENAMED__', clientId);
+        this.echoFilter.recordRemoteWrite(newRelativePath, '__RENAMED__', clientId);
+
+        await fs.promises.rename(oldFullPath, newFullPath);
+        return true;
+      });
+    });
   }
 }
