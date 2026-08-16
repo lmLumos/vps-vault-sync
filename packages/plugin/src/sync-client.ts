@@ -46,6 +46,7 @@ export class SyncClient {
   private statusListeners: Array<(status: SyncStatus, detail?: string) => void> = [];
   private activityLogs: ActivityLogEntry[] = [];
   private isReconciling = false;
+  private reloadTimers = new Map<string, number>();
 
   constructor(app: App, plugin: VPSVaultSyncPlugin) {
     this.app = app;
@@ -520,21 +521,32 @@ export class SyncClient {
 
               if (pluginInstance) {
                 // Folder Icons / Iconize
-                if (typeof pluginInstance.loadIconFolderData === 'function') {
-                  await pluginInstance.loadIconFolderData();
+                if (pluginId === 'obsidian-icon-folder' || pluginId === 'iconize') {
+                  try {
+                    const text = await this.app.vault.adapter.read(normalizedPath);
+                    pluginInstance.data = Object.assign({}, pluginInstance.data, JSON.parse(text));
+                  } catch {}
+                  if (typeof pluginInstance.loadIconFolderData === 'function') {
+                    await pluginInstance.loadIconFolderData();
+                  }
                   if (typeof pluginInstance.handleChangeLayout === 'function') {
                     pluginInstance.handleChangeLayout();
                   }
+                  this.app.workspace.trigger('layout-change');
                 }
 
                 // Minimal Theme Settings
-                if (typeof pluginInstance.loadSettings === 'function') {
-                  await pluginInstance.loadSettings();
+                if (pluginId === 'obsidian-minimal-settings') {
+                  try {
+                    const text = await this.app.vault.adapter.read(normalizedPath);
+                    pluginInstance.settings = Object.assign({}, pluginInstance.settings, JSON.parse(text));
+                  } catch {}
                   if (typeof pluginInstance.refresh === 'function') pluginInstance.refresh();
                   if (typeof pluginInstance.updateDarkScheme === 'function') pluginInstance.updateDarkScheme();
                   if (typeof pluginInstance.updateLightScheme === 'function') pluginInstance.updateLightScheme();
                   if (typeof pluginInstance.updateDarkStyle === 'function') pluginInstance.updateDarkStyle();
                   if (typeof pluginInstance.updateLightStyle === 'function') pluginInstance.updateLightStyle();
+                  this.app.workspace.trigger('css-change');
                 }
 
                 // Style Settings
@@ -548,6 +560,7 @@ export class SyncClient {
                   if (typeof pluginInstance.settingsManager.setCSSVariables === 'function') {
                     pluginInstance.settingsManager.setCSSVariables();
                   }
+                  this.app.workspace.trigger('css-change');
                 }
 
                 // Generic plugin settings re-read
