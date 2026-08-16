@@ -2465,20 +2465,56 @@ var SyncClient = class {
                 if (pluginId === "obsidian-minimal-settings") {
                   try {
                     const text = await this.app.vault.adapter.read(normalizedPath);
-                    pluginInstance.settings = Object.assign({}, pluginInstance.settings, JSON.parse(text));
-                  } catch {
+                    const newSettings = JSON.parse(text);
+                    pluginInstance.settings = Object.assign({}, pluginInstance.settings, newSettings);
+                    const darkSchemes = [
+                      "minimal-atom-dark",
+                      "minimal-ayu-dark",
+                      "minimal-catppuccin-dark",
+                      "minimal-default-dark",
+                      "minimal-dracula-dark",
+                      "minimal-eink-dark",
+                      "minimal-everforest-dark",
+                      "minimal-flexoki-dark",
+                      "minimal-gruvbox-dark",
+                      "minimal-macos-dark",
+                      "minimal-nord-dark",
+                      "minimal-notion-dark",
+                      "minimal-rose-pine-dark",
+                      "minimal-solarized-dark",
+                      "minimal-things-dark"
+                    ];
+                    const lightSchemes = [
+                      "minimal-atom-light",
+                      "minimal-ayu-light",
+                      "minimal-catppuccin-light",
+                      "minimal-default-light",
+                      "minimal-eink-light",
+                      "minimal-everforest-light",
+                      "minimal-flexoki-light",
+                      "minimal-gruvbox-light",
+                      "minimal-macos-light",
+                      "minimal-nord-light",
+                      "minimal-notion-light",
+                      "minimal-rose-pine-light",
+                      "minimal-solarized-light",
+                      "minimal-things-light"
+                    ];
+                    document.body.classList.remove(...darkSchemes);
+                    if (pluginInstance.settings.darkScheme) {
+                      document.body.classList.add(pluginInstance.settings.darkScheme);
+                    }
+                    document.body.classList.remove(...lightSchemes);
+                    if (pluginInstance.settings.lightScheme) {
+                      document.body.classList.add(pluginInstance.settings.lightScheme);
+                    }
+                    if (typeof pluginInstance.refresh === "function") {
+                      pluginInstance.refresh();
+                    }
+                    this.app.workspace.trigger("css-change");
+                  } catch (err) {
+                    console.warn("[SyncClient] Error applying minimal settings:", err);
                   }
-                  if (typeof pluginInstance.refresh === "function")
-                    pluginInstance.refresh();
-                  if (typeof pluginInstance.updateDarkScheme === "function")
-                    pluginInstance.updateDarkScheme();
-                  if (typeof pluginInstance.updateLightScheme === "function")
-                    pluginInstance.updateLightScheme();
-                  if (typeof pluginInstance.updateDarkStyle === "function")
-                    pluginInstance.updateDarkStyle();
-                  if (typeof pluginInstance.updateLightStyle === "function")
-                    pluginInstance.updateLightStyle();
-                  this.app.workspace.trigger("css-change");
                 }
                 if (pluginInstance.settingsManager) {
                   if (typeof pluginInstance.settingsManager.load === "function") {
