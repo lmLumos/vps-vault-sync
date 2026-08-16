@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "node --test 'dist/**/*.test.js'"
+    "test": "node --test dist/hash.test.js dist/ignore.test.js dist/merge.test.js"
   },
   "dependencies": {
     "diff-match-patch": "^1.0.5"
