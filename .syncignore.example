@@ -1,0 +1,15 @@
+# Default ignored directories and files
+.git/
+.sync-archive/
+.sync-trash/
+.trash/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.swp
+*~
+
+# Obsidian internal caches (safe to ignore)
+.obsidian/cache/
+.obsidian/workspace.json.tmp

@@ -1,0 +1,29 @@
+{
+  "name": "vps-vault-sync-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time bidirectional synchronization between Obsidian and a VPS vault folder",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:shared": "npm run build -w packages/shared",
+    "build:server": "npm run build -w packages/server",
+    "build:plugin": "npm run build -w packages/plugin",
+    "dev:server": "npm run dev -w packages/server",
+    "dev:plugin": "npm run dev -w packages/plugin",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "sync",
+    "vps",
+    "live-sync",
+    "self-hosted"
+  ],
+  "author": "",
+  "license": "MIT"
+}

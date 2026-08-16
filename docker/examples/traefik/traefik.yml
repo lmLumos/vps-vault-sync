@@ -1,0 +1,16 @@
+## Traefik Dynamic Configuration
+http:
+  routers:
+    vps-vault-sync:
+      rule: "Host(`sync.yourdomain.com`)"
+      entryPoints:
+        - websecure
+      service: vps-vault-sync-svc
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    vps-vault-sync-svc:
+      loadBalancer:
+        servers:
+          - url: "http://sync-server:3000"

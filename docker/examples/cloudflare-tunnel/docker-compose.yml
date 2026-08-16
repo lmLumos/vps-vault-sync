@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  sync-server:
+    build:
+      context: ../..
+      dockerfile: packages/server/Dockerfile
+    container_name: vps-vault-sync
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - SYNC_TOKEN=change-this-to-a-strong-secret-token
+      - VAULT_PATH=/data/vault
+      - ARCHIVE_RETENTION_DAYS=30
+    volumes:
+      - /path/to/your/vps/vault:/data/vault
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vps-sync-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=your-cloudflare-tunnel-token-here
+    depends_on:
+      - sync-server

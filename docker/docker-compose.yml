@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  sync-server:
+    build:
+      context: ..
+      dockerfile: packages/server/Dockerfile
+    container_name: vps-vault-sync
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - SYNC_TOKEN=change-this-to-a-strong-secret-token
+      - VAULT_PATH=/data/vault
+      - ARCHIVE_RETENTION_DAYS=30
+      - MAX_FILE_SIZE_MB=100
+      - SYNC_OBSIDIAN_CONFIG=true
+      - SYNC_WORKSPACE=false
+    volumes:
+      # Mount your actual Obsidian vault directory on the host VPS here:
+      - /path/to/your/vps/vault:/data/vault
