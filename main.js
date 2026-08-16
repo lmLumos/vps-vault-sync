@@ -2480,25 +2480,12 @@ var SyncClient = class {
                 if (typeof pluginInstance.loadData === "function" && typeof pluginInstance.settings === "object") {
                   pluginInstance.settings = Object.assign({}, pluginInstance.settings, await pluginInstance.loadData());
                 }
-              }
-              if (typeof plugins.disablePlugin === "function" && typeof plugins.enablePlugin === "function") {
-                await plugins.disablePlugin(pluginId);
-                await plugins.enablePlugin(pluginId);
-              }
-              const newInstance = plugins.plugins?.[pluginId];
-              if (newInstance) {
-                if (typeof newInstance.loadIconFolderData === "function") {
-                  await newInstance.loadIconFolderData();
-                }
-                if (typeof newInstance.handleChangeLayout === "function") {
-                  newInstance.handleChangeLayout();
-                }
-                if (typeof newInstance.loadSettings === "function") {
-                  await newInstance.loadSettings();
-                }
-                if (typeof newInstance.refresh === "function") {
-                  newInstance.refresh();
-                }
+                if (typeof pluginInstance.refresh === "function")
+                  pluginInstance.refresh();
+                if (typeof pluginInstance.updateStyles === "function")
+                  pluginInstance.updateStyles();
+                if (typeof pluginInstance.applySettings === "function")
+                  pluginInstance.applySettings();
               }
             }
             this.app.workspace.trigger("css-change");

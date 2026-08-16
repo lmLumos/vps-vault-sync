@@ -518,7 +518,6 @@ export class SyncClient {
               console.log(`[SyncClient] Live reloading plugin "${pluginId}" after sync...`);
               const pluginInstance = plugins.plugins?.[pluginId];
 
-              // 1. Direct in-place hook calls for specific plugins
               if (pluginInstance) {
                 // Folder Icons / Iconize
                 if (typeof pluginInstance.loadIconFolderData === 'function') {
@@ -555,29 +554,9 @@ export class SyncClient {
                 if (typeof pluginInstance.loadData === 'function' && typeof pluginInstance.settings === 'object') {
                   pluginInstance.settings = Object.assign({}, pluginInstance.settings, await pluginInstance.loadData());
                 }
-              }
-
-              // 2. Full disable/enable reload
-              if (typeof plugins.disablePlugin === 'function' && typeof plugins.enablePlugin === 'function') {
-                await plugins.disablePlugin(pluginId);
-                await plugins.enablePlugin(pluginId);
-              }
-
-              // 3. Post-reload invocation on fresh instance
-              const newInstance = plugins.plugins?.[pluginId];
-              if (newInstance) {
-                if (typeof newInstance.loadIconFolderData === 'function') {
-                  await newInstance.loadIconFolderData();
-                }
-                if (typeof newInstance.handleChangeLayout === 'function') {
-                  newInstance.handleChangeLayout();
-                }
-                if (typeof newInstance.loadSettings === 'function') {
-                  await newInstance.loadSettings();
-                }
-                if (typeof newInstance.refresh === 'function') {
-                  newInstance.refresh();
-                }
+                if (typeof pluginInstance.refresh === 'function') pluginInstance.refresh();
+                if (typeof pluginInstance.updateStyles === 'function') pluginInstance.updateStyles();
+                if (typeof pluginInstance.applySettings === 'function') pluginInstance.applySettings();
               }
             }
 
