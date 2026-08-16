@@ -441,24 +441,80 @@ export class SyncClient {
     const configPrefix = (this.app.vault.configDir || '.obsidian') + '/';
     if (normalizedPath.startsWith('.obsidian/') || normalizedPath.startsWith(configPrefix)) {
       this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
-      try {
-        if (normalizedPath.includes('appearance.json') || normalizedPath.includes('/themes/') || normalizedPath.includes('/snippets/')) {
-          const customCss = (this.app as any).customCss;
-          if (customCss) {
-            if (typeof customCss.requestLoadTheme === 'function') customCss.requestLoadTheme();
-            if (typeof customCss.requestLoadSnippets === 'function') customCss.requestLoadSnippets();
-            if (typeof customCss.loadTheme === 'function') customCss.loadTheme();
-          }
+      this.hotReloadPluginOrTheme(normalizedPath);
+    }
+  }
+
+  /**
+   * Dynamically hot-reloads running plugins, themes, and views when their data.json or styles change
+   */
+  private hotReloadPluginOrTheme(normalizedPath: string): void {
+    try {
+      // 1. Theme / CSS / Appearance reload
+      if (
+        normalizedPath.includes('appearance.json') ||
+        normalizedPath.includes('/themes/') ||
+        normalizedPath.includes('/snippets/')
+      ) {
+        const customCss = (this.app as any).customCss;
+        if (customCss) {
+          if (typeof customCss.requestLoadTheme === 'function') customCss.requestLoadTheme();
+          if (typeof customCss.requestLoadSnippets === 'function') customCss.requestLoadSnippets();
+          if (typeof customCss.loadTheme === 'function') customCss.loadTheme();
+          if (typeof customCss.readSnippets === 'function') customCss.readSnippets();
         }
-        if (normalizedPath.includes('/plugins/') || normalizedPath.includes('community-plugins.json')) {
-          const plugins = (this.app as any).plugins;
-          if (plugins && typeof plugins.loadManifests === 'function') {
-            plugins.loadManifests();
-          }
-        }
-      } catch {
-        // ignore internal API differences across Obsidian versions
       }
+
+      // 2. Plugin data or manifest changes (Icons, Themes, Minimal settings, etc.)
+      const pluginMatch = normalizedPath.match(/(?:\.obsidian|[^\/]+)\/plugins\/([^\/]+)\//);
+      if (pluginMatch) {
+        const pluginId = pluginMatch[1];
+        if (pluginId && pluginId !== 'vps-vault-sync') {
+          // Debounce reload to avoid re-enabling multiple times during multi-file download
+          if (this.reloadTimers.has(pluginId)) {
+            window.clearTimeout(this.reloadTimers.get(pluginId)!);
+          }
+
+          const timer = window.setTimeout(async () => {
+            this.reloadTimers.delete(pluginId);
+            const plugins = (this.app as any).plugins;
+            if (!plugins) return;
+
+            // If manifest updated or new plugin, refresh manifests
+            if (typeof plugins.loadManifests === 'function') {
+              await plugins.loadManifests();
+            }
+
+            // If plugin is enabled, reload it so it reads new data.json
+            if (plugins.enabledPlugins?.has(pluginId)) {
+              console.log(`[SyncClient] Hot-reloading plugin "${pluginId}" after settings/data sync...`);
+              if (typeof plugins.disablePlugin === 'function' && typeof plugins.enablePlugin === 'function') {
+                await plugins.disablePlugin(pluginId);
+                await plugins.enablePlugin(pluginId);
+              }
+            }
+
+            // Refresh file explorer if icon plugin reloaded
+            if (pluginId.includes('icon') || pluginId.includes('folder')) {
+              const leaves = this.app.workspace.getLeavesOfType('file-explorer');
+              for (const leaf of leaves) {
+                if ((leaf.view as any)?.requestSort) {
+                  (leaf.view as any).requestSort();
+                }
+              }
+            }
+          }, 350);
+
+          this.reloadTimers.set(pluginId, timer);
+        }
+      } else if (normalizedPath.includes('community-plugins.json')) {
+        const plugins = (this.app as any).plugins;
+        if (plugins && typeof plugins.loadManifests === 'function') {
+          plugins.loadManifests();
+        }
+      }
+    } catch (err) {
+      console.warn('[SyncClient] Error in hot-reload:', err);
     }
   }
 

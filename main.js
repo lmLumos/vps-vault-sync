@@ -2376,26 +2376,68 @@ var SyncClient = class {
     const configPrefix = (this.app.vault.configDir || ".obsidian") + "/";
     if (normalizedPath.startsWith(".obsidian/") || normalizedPath.startsWith(configPrefix)) {
       this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
-      try {
-        if (normalizedPath.includes("appearance.json") || normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
-          const customCss = this.app.customCss;
-          if (customCss) {
-            if (typeof customCss.requestLoadTheme === "function")
-              customCss.requestLoadTheme();
-            if (typeof customCss.requestLoadSnippets === "function")
-              customCss.requestLoadSnippets();
-            if (typeof customCss.loadTheme === "function")
-              customCss.loadTheme();
-          }
+      this.hotReloadPluginOrTheme(normalizedPath);
+    }
+  }
+  /**
+   * Dynamically hot-reloads running plugins, themes, and views when their data.json or styles change
+   */
+  hotReloadPluginOrTheme(normalizedPath) {
+    try {
+      if (normalizedPath.includes("appearance.json") || normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
+        const customCss = this.app.customCss;
+        if (customCss) {
+          if (typeof customCss.requestLoadTheme === "function")
+            customCss.requestLoadTheme();
+          if (typeof customCss.requestLoadSnippets === "function")
+            customCss.requestLoadSnippets();
+          if (typeof customCss.loadTheme === "function")
+            customCss.loadTheme();
+          if (typeof customCss.readSnippets === "function")
+            customCss.readSnippets();
         }
-        if (normalizedPath.includes("/plugins/") || normalizedPath.includes("community-plugins.json")) {
-          const plugins = this.app.plugins;
-          if (plugins && typeof plugins.loadManifests === "function") {
-            plugins.loadManifests();
-          }
-        }
-      } catch {
       }
+      const pluginMatch = normalizedPath.match(/(?:\.obsidian|[^\/]+)\/plugins\/([^\/]+)\//);
+      if (pluginMatch) {
+        const pluginId = pluginMatch[1];
+        if (pluginId && pluginId !== "vps-vault-sync") {
+          if (this.reloadTimers.has(pluginId)) {
+            window.clearTimeout(this.reloadTimers.get(pluginId));
+          }
+          const timer = window.setTimeout(async () => {
+            this.reloadTimers.delete(pluginId);
+            const plugins = this.app.plugins;
+            if (!plugins)
+              return;
+            if (typeof plugins.loadManifests === "function") {
+              await plugins.loadManifests();
+            }
+            if (plugins.enabledPlugins?.has(pluginId)) {
+              console.log(`[SyncClient] Hot-reloading plugin "${pluginId}" after settings/data sync...`);
+              if (typeof plugins.disablePlugin === "function" && typeof plugins.enablePlugin === "function") {
+                await plugins.disablePlugin(pluginId);
+                await plugins.enablePlugin(pluginId);
+              }
+            }
+            if (pluginId.includes("icon") || pluginId.includes("folder")) {
+              const leaves = this.app.workspace.getLeavesOfType("file-explorer");
+              for (const leaf of leaves) {
+                if (leaf.view?.requestSort) {
+                  leaf.view.requestSort();
+                }
+              }
+            }
+          }, 350);
+          this.reloadTimers.set(pluginId, timer);
+        }
+      } else if (normalizedPath.includes("community-plugins.json")) {
+        const plugins = this.app.plugins;
+        if (plugins && typeof plugins.loadManifests === "function") {
+          plugins.loadManifests();
+        }
+      }
+    } catch (err) {
+      console.warn("[SyncClient] Error in hot-reload:", err);
     }
   }
   async applyRemoteFileDelete(event) {
