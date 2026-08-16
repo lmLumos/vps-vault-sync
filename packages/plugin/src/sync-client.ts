@@ -1,4 +1,4 @@
-import { App, Notice, TFile, TFolder } from 'obsidian';
+import { App, Notice, TFile, TFolder, arrayBufferToBase64, base64ToArrayBuffer } from 'obsidian';
 import {
   AuthRequestMessage,
   AuthResponseMessage,
@@ -295,7 +295,7 @@ export class SyncClient {
             let hash = '';
             if (isBin) {
               const buf = await adapter.readBinary(event.path);
-              content = Buffer.from(buf).toString('base64');
+              content = arrayBufferToBase64(buf);
               hash = hashBuffer(buf);
             } else {
               content = await adapter.read(event.path);
@@ -318,7 +318,7 @@ export class SyncClient {
             const isBin = event.isBinary ?? isBinaryFile(event.newPath);
             if (isBin) {
               const buf = await adapter.readBinary(event.newPath);
-              content = Buffer.from(buf).toString('base64');
+              content = arrayBufferToBase64(buf);
             } else {
               content = await adapter.read(event.newPath);
             }
@@ -470,8 +470,7 @@ export class SyncClient {
       this.logActivity('download', normalizedPath, `Downloaded note (${event.type})`);
     } else {
       // Binary file
-      const buf = Buffer.from(content, 'base64');
-      const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      const arrayBuf = base64ToArrayBuffer(content);
 
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
@@ -869,7 +868,7 @@ export class SyncClient {
             if (isBin) {
               const buf = await adapter.readBinary(p);
               hash = hashBuffer(buf);
-              contentStr = Buffer.from(buf).toString('base64');
+              contentStr = arrayBufferToBase64(buf);
             } else {
               contentStr = await adapter.read(p);
               hash = hashString(contentStr);

@@ -55,14 +55,20 @@ export default class VPSVaultSyncPlugin extends Plugin {
     this.syncClient = new SyncClient(this.app, this);
     this.vaultWatcher = new VaultWatcher(this.app, this, this.ignoreFilter);
 
-    // Register Status Bar Item
-    const statusBarEl = this.addStatusBarItem();
-    this.statusBarItemView = new StatusBarItemView(statusBarEl, this);
+    // Register Status Bar Item (Desktop only - mobile returns null)
+    try {
+      const statusBarEl = this.addStatusBarItem();
+      if (statusBarEl) {
+        this.statusBarItemView = new StatusBarItemView(statusBarEl, this);
 
-    // Register Status Change listener
-    this.syncClient.onStatusChange((status: SyncStatus, detail?: string) => {
-      this.statusBarItemView.updateStatus(status, detail);
-    });
+        // Register Status Change listener
+        this.syncClient.onStatusChange((status: SyncStatus, detail?: string) => {
+          this.statusBarItemView?.updateStatus(status, detail);
+        });
+      }
+    } catch (err) {
+      console.warn('[VPS Vault Sync] Status bar not supported on this platform:', err);
+    }
 
     // Add Ribbon Icon
     this.addRibbonIcon('refresh-cw', 'VPS Live Sync: Open Activity Log', () => {

@@ -3,16 +3,19 @@ import { SyncStatus, ActivityLogEntry } from './sync-client';
 import type VPSVaultSyncPlugin from './main';
 
 export class StatusBarItemView {
-  private el: HTMLElement;
+  private el: HTMLElement | null;
   private plugin: VPSVaultSyncPlugin;
 
-  constructor(el: HTMLElement, plugin: VPSVaultSyncPlugin) {
+  constructor(el: HTMLElement | null, plugin: VPSVaultSyncPlugin) {
     this.el = el;
     this.plugin = plugin;
-    this.init();
+    if (this.el) {
+      this.init();
+    }
   }
 
   private init(): void {
+    if (!this.el) return;
     this.el.addClass('vps-sync-status-bar');
     this.el.setAttribute('aria-label', 'VPS Live Sync: Initializing');
     this.updateStatus('disconnected');
@@ -23,6 +26,7 @@ export class StatusBarItemView {
   }
 
   public updateStatus(status: SyncStatus, detail?: string): void {
+    if (!this.el) return;
     this.el.empty();
     const iconSpan = this.el.createSpan({ cls: 'vps-sync-icon' });
     const textSpan = this.el.createSpan({ cls: 'vps-sync-text' });

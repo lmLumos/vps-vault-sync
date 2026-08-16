@@ -1,4 +1,4 @@
-import { App, EventRef, TAbstractFile, TFile, TFolder } from 'obsidian';
+import { App, EventRef, TAbstractFile, TFile, TFolder, arrayBufferToBase64 } from 'obsidian';
 import {
   FileCreateOrModifyEvent,
   FileDeleteEvent,
@@ -130,7 +130,7 @@ export class VaultWatcher {
       mtime = file.stat.mtime;
       if (isBin) {
         const buf = await this.app.vault.readBinary(file);
-        content = Buffer.from(buf).toString('base64');
+        content = arrayBufferToBase64(buf);
         hash = hashBuffer(buf);
       } else {
         content = await this.app.vault.read(file);
@@ -173,7 +173,7 @@ export class VaultWatcher {
 
         if (isBin) {
           const buf = await this.app.vault.readBinary(file);
-          content = Buffer.from(buf).toString('base64');
+          content = arrayBufferToBase64(buf);
           hash = hashBuffer(buf);
         } else {
           content = await this.app.vault.read(file);
@@ -247,7 +247,7 @@ export class VaultWatcher {
             if (isBin) {
               const buf = await adapter.readBinary(normalized);
               currentHash = hashBuffer(buf);
-              contentStr = Buffer.from(buf).toString('base64');
+              contentStr = arrayBufferToBase64(buf);
             } else {
               contentStr = await adapter.read(normalized);
               currentHash = hashString(contentStr);

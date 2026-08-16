@@ -2271,7 +2271,7 @@ var SyncClient = class {
             let hash = "";
             if (isBin) {
               const buf = await adapter.readBinary(event.path);
-              content = Buffer.from(buf).toString("base64");
+              content = (0, import_obsidian2.arrayBufferToBase64)(buf);
               hash = (0, import_shared.hashBuffer)(buf);
             } else {
               content = await adapter.read(event.path);
@@ -2294,7 +2294,7 @@ var SyncClient = class {
             const isBin = event.isBinary ?? (0, import_shared.isBinaryFile)(event.newPath);
             if (isBin) {
               const buf = await adapter.readBinary(event.newPath);
-              content = Buffer.from(buf).toString("base64");
+              content = (0, import_obsidian2.arrayBufferToBase64)(buf);
             } else {
               content = await adapter.read(event.newPath);
             }
@@ -2422,8 +2422,7 @@ var SyncClient = class {
       this.plugin.conflictHandler.recordBaseSnapshot(normalizedPath, incomingText);
       this.logActivity("download", normalizedPath, `Downloaded note (${event.type})`);
     } else {
-      const buf = Buffer.from(content, "base64");
-      const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      const arrayBuf = (0, import_obsidian2.base64ToArrayBuffer)(content);
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
       this.logActivity("download", normalizedPath, `Downloaded binary asset`);
@@ -2792,7 +2791,7 @@ var SyncClient = class {
             if (isBin) {
               const buf = await adapter.readBinary(p);
               hash = (0, import_shared.hashBuffer)(buf);
-              contentStr = Buffer.from(buf).toString("base64");
+              contentStr = (0, import_obsidian2.arrayBufferToBase64)(buf);
             } else {
               contentStr = await adapter.read(p);
               hash = (0, import_shared.hashString)(contentStr);
@@ -2985,7 +2984,7 @@ var VaultWatcher = class {
       mtime = file.stat.mtime;
       if (isBin) {
         const buf = await this.app.vault.readBinary(file);
-        content = Buffer.from(buf).toString("base64");
+        content = (0, import_obsidian3.arrayBufferToBase64)(buf);
         hash = (0, import_shared2.hashBuffer)(buf);
       } else {
         content = await this.app.vault.read(file);
@@ -3023,7 +3022,7 @@ var VaultWatcher = class {
         let hash;
         if (isBin) {
           const buf = await this.app.vault.readBinary(file);
-          content = Buffer.from(buf).toString("base64");
+          content = (0, import_obsidian3.arrayBufferToBase64)(buf);
           hash = (0, import_shared2.hashBuffer)(buf);
         } else {
           content = await this.app.vault.read(file);
@@ -3085,7 +3084,7 @@ var VaultWatcher = class {
             if (isBin) {
               const buf = await adapter.readBinary(normalized);
               currentHash = (0, import_shared2.hashBuffer)(buf);
-              contentStr = Buffer.from(buf).toString("base64");
+              contentStr = (0, import_obsidian3.arrayBufferToBase64)(buf);
             } else {
               contentStr = await adapter.read(normalized);
               currentHash = (0, import_shared2.hashString)(contentStr);
@@ -3335,9 +3334,13 @@ var StatusBarItemView = class {
   constructor(el, plugin) {
     this.el = el;
     this.plugin = plugin;
-    this.init();
+    if (this.el) {
+      this.init();
+    }
   }
   init() {
+    if (!this.el)
+      return;
     this.el.addClass("vps-sync-status-bar");
     this.el.setAttribute("aria-label", "VPS Live Sync: Initializing");
     this.updateStatus("disconnected");
@@ -3346,6 +3349,8 @@ var StatusBarItemView = class {
     });
   }
   updateStatus(status, detail) {
+    if (!this.el)
+      return;
     this.el.empty();
     const iconSpan = this.el.createSpan({ cls: "vps-sync-icon" });
     const textSpan = this.el.createSpan({ cls: "vps-sync-text" });
@@ -3494,11 +3499,17 @@ var VPSVaultSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.syncClient = new SyncClient(this.app, this);
     this.vaultWatcher = new VaultWatcher(this.app, this, this.ignoreFilter);
-    const statusBarEl = this.addStatusBarItem();
-    this.statusBarItemView = new StatusBarItemView(statusBarEl, this);
-    this.syncClient.onStatusChange((status, detail) => {
-      this.statusBarItemView.updateStatus(status, detail);
-    });
+    try {
+      const statusBarEl = this.addStatusBarItem();
+      if (statusBarEl) {
+        this.statusBarItemView = new StatusBarItemView(statusBarEl, this);
+        this.syncClient.onStatusChange((status, detail) => {
+          this.statusBarItemView?.updateStatus(status, detail);
+        });
+      }
+    } catch (err) {
+      console.warn("[VPS Vault Sync] Status bar not supported on this platform:", err);
+    }
     this.addRibbonIcon("refresh-cw", "VPS Live Sync: Open Activity Log", () => {
       this.openActivityLogModal();
     });
