@@ -87,7 +87,7 @@ export function hashBuffer(buffer: Uint8Array | ArrayBuffer): string {
 
 export function isBinaryFile(path: string): boolean {
   const binaryExtensions = new Set([
-    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico',
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico',
     'pdf', 'epub', 'mobi',
     'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac',
     'mp4', 'webm', 'mov', 'avi', 'mkv',

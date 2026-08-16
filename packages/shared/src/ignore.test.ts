@@ -51,4 +51,14 @@ secret-*.md
     assert.strictEqual(filter.isIgnored('debug.log'), true);
     assert.strictEqual(filter.isIgnored('Public/Note.md'), false);
   });
+
+  it('should ignore empty and root-only paths', () => {
+    const filter = new IgnoreFilter();
+
+    assert.strictEqual(filter.isIgnored(''), true);
+    assert.strictEqual(filter.isIgnored('/'), true);
+    assert.strictEqual(filter.isIgnored('///'), true);
+    assert.strictEqual(filter.isIgnored('\\'), true);
+    assert.strictEqual(filter.isIgnored('\\\\\\'), true);
+  });
 });

@@ -32,5 +32,6 @@ describe('Hash & File Utilities', () => {
     assert.strictEqual(isBinaryFile('script.js'), false);
     assert.strictEqual(isBinaryFile('styles.css'), false);
     assert.strictEqual(isBinaryFile('file.txt'), false);
+    assert.strictEqual(isBinaryFile('diagram.svg'), false);
   });
 });

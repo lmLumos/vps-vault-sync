@@ -94,7 +94,7 @@ export class IgnoreFilter {
   public isIgnored(rawPath: string): boolean {
     const normalized = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
 
-    // Never ignore empty path
+    // Ignore empty or root paths (e.g., empty string or leading slashes only)
     if (!normalized) return true;
 
     for (const regex of this.patterns) {
