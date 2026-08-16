@@ -400,7 +400,6 @@ export class SyncClient {
       await this.ensureParentFolder(normalizedPath);
       await adapter.write(normalizedPath, incomingText);
       this.plugin.conflictHandler.recordBaseSnapshot(normalizedPath, incomingText);
-      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity('download', normalizedPath, `Downloaded note (${event.type})`);
     } else {
       // Binary file
@@ -409,13 +408,12 @@ export class SyncClient {
 
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
-      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity('download', normalizedPath, `Downloaded binary asset`);
     }
 
-    // Dynamically trigger theme or plugin reload if config files changed
     const configPrefix = (this.app.vault.configDir || '.obsidian') + '/';
     if (normalizedPath.startsWith('.obsidian/') || normalizedPath.startsWith(configPrefix)) {
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       try {
         if (normalizedPath.includes('appearance.json') || normalizedPath.includes('/themes/') || normalizedPath.includes('/snippets/')) {
           const customCss = (this.app as any).customCss;

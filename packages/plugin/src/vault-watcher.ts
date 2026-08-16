@@ -23,7 +23,11 @@ export class VaultWatcher {
   private configPollInterval: number | null = null;
 
   public recordConfigHash(path: string, hash: string): void {
-    this.obsidianConfigHashes.set(path.replace(/\\/g, '/'), hash);
+    const normalized = path.replace(/\\/g, '/');
+    const configPrefix = (this.app.vault.configDir || '.obsidian') + '/';
+    if (normalized.startsWith('.obsidian/') || normalized.startsWith(configPrefix)) {
+      this.obsidianConfigHashes.set(normalized, hash);
+    }
   }
 
   constructor(app: App, plugin: VPSVaultSyncPlugin, ignoreFilter: IgnoreFilter) {
@@ -307,10 +311,12 @@ export class VaultWatcher {
 
       await scanSubDir(configDir);
 
-      // Check for deleted config files
+      // Check for deleted config files (ONLY for .obsidian internal paths)
       if (this.initialConfigScanned) {
+        const configPrefix = (configDir || '.obsidian') + '/';
         for (const [trackedPath] of this.obsidianConfigHashes.entries()) {
-          if (!seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
+          const isConfigPath = trackedPath.startsWith('.obsidian/') || trackedPath.startsWith(configPrefix);
+          if (isConfigPath && !seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
             this.obsidianConfigHashes.delete(trackedPath);
             const deleteEvent: FileDeleteEvent = {
               id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,

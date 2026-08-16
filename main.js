@@ -63,7 +63,8 @@ var require_types = __commonJS({
         "**/*~",
         ".obsidian/cache/**",
         ".obsidian/workspace.json.tmp",
-        ".obsidian/plugins/vps-vault-sync/data.json"
+        ".obsidian/plugins/vps-vault-sync/data.json",
+        "**/*.sync-conflict*"
       ]
     };
   }
@@ -2340,18 +2341,17 @@ var SyncClient = class {
       await this.ensureParentFolder(normalizedPath);
       await adapter.write(normalizedPath, incomingText);
       this.plugin.conflictHandler.recordBaseSnapshot(normalizedPath, incomingText);
-      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity("download", normalizedPath, `Downloaded note (${event.type})`);
     } else {
       const buf = Buffer.from(content, "base64");
       const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       await this.ensureParentFolder(normalizedPath);
       await adapter.writeBinary(normalizedPath, arrayBuf);
-      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       this.logActivity("download", normalizedPath, `Downloaded binary asset`);
     }
     const configPrefix = (this.app.vault.configDir || ".obsidian") + "/";
     if (normalizedPath.startsWith(".obsidian/") || normalizedPath.startsWith(configPrefix)) {
+      this.plugin.vaultWatcher.recordConfigHash(normalizedPath, event.hash);
       try {
         if (normalizedPath.includes("appearance.json") || normalizedPath.includes("/themes/") || normalizedPath.includes("/snippets/")) {
           const customCss = this.app.customCss;
@@ -2619,7 +2619,11 @@ var VaultWatcher = class {
     this.ignoreFilter = ignoreFilter;
   }
   recordConfigHash(path, hash) {
-    this.obsidianConfigHashes.set(path.replace(/\\/g, "/"), hash);
+    const normalized = path.replace(/\\/g, "/");
+    const configPrefix = (this.app.vault.configDir || ".obsidian") + "/";
+    if (normalized.startsWith(".obsidian/") || normalized.startsWith(configPrefix)) {
+      this.obsidianConfigHashes.set(normalized, hash);
+    }
   }
   start() {
     this.eventRefs.push(
@@ -2859,8 +2863,10 @@ var VaultWatcher = class {
       };
       await scanSubDir(configDir);
       if (this.initialConfigScanned) {
+        const configPrefix = (configDir || ".obsidian") + "/";
         for (const [trackedPath] of this.obsidianConfigHashes.entries()) {
-          if (!seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
+          const isConfigPath = trackedPath.startsWith(".obsidian/") || trackedPath.startsWith(configPrefix);
+          if (isConfigPath && !seenConfigPaths.has(trackedPath) && !this.isSuppressed(trackedPath)) {
             this.obsidianConfigHashes.delete(trackedPath);
             const deleteEvent = {
               id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
