@@ -7,13 +7,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "build:shared": "npm run build -w packages/shared",
-    "build:server": "npm run build -w packages/server",
-    "build:plugin": "npm run build -w packages/plugin",
-    "dev:server": "npm run dev -w packages/server",
-    "dev:plugin": "npm run dev -w packages/plugin",
-    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build -w @vps-vault-sync/shared && npm run build -w @vps-vault-sync/server && npm run build -w @vps-vault-sync/obsidian-plugin",
+    "build:shared": "npm run build -w @vps-vault-sync/shared",
+    "build:server": "npm run build -w @vps-vault-sync/server",
+    "build:plugin": "npm run build -w @vps-vault-sync/obsidian-plugin",
+    "dev:server": "npm run dev -w @vps-vault-sync/server",
+    "dev:plugin": "npm run dev -w @vps-vault-sync/obsidian-plugin",
+    "test": "npm run test -w @vps-vault-sync/shared && npm run test -w @vps-vault-sync/server",
     "lint": "npm run lint --workspaces --if-present"
   },
   "keywords": [
