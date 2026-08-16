@@ -48,20 +48,36 @@ export class SyncSettingTab extends PluginSettingTab {
     });
 
     // Server Connection Section
-    new Setting(containerEl)
+    const serverUrlSetting = new Setting(containerEl)
       .setName('Server URL')
-      .setDesc('WebSocket or HTTP address of your VPS sync server (e.g. wss://sync.yourdomain.com or ws://192.168.1.100:3000)')
+      .setDesc('WebSocket or HTTP address of your VPS sync server (e.g. wss://sync.yourdomain.com). For non-local hosts, wss:// or https:// is strongly recommended.')
       .addText(text => text
         .setPlaceholder('wss://sync.example.com')
         .setValue(this.plugin.settings.serverUrl)
         .onChange(async (value) => {
           this.plugin.settings.serverUrl = value.trim();
           await this.plugin.saveSettings();
+          this.display(); // re-render to update TLS warning
         }));
+
+    // Insecure Transport Warning (Issue 7)
+    const url = this.plugin.settings.serverUrl.trim().toLowerCase();
+    const isInsecure = (url.startsWith('ws://') || url.startsWith('http://')) &&
+      !url.includes('localhost') && !url.includes('127.0.0.1') && !url.includes('[::1]');
+
+    if (isInsecure) {
+      const warnEl = containerEl.createEl('div', {
+        cls: 'setting-item-description',
+        text: '⚠️ Security Warning: Unencrypted transport (ws:// or http://) in use for a non-local host. Note contents and authentication tokens will be transmitted in cleartext over the network. We strongly recommend configuring TLS with wss:// via a reverse proxy (Caddy, Nginx, or Cloudflare Tunnel).'
+      });
+      warnEl.style.color = 'var(--text-warning, #e5a50a)';
+      warnEl.style.marginBottom = '12px';
+      warnEl.style.fontSize = '12px';
+    }
 
     new Setting(containerEl)
       .setName('Secret API Token')
-      .setDesc('The secret authentication token configured on your VPS server (SYNC_TOKEN).')
+      .setDesc('The secret authentication token configured on your VPS server (SYNC_TOKEN). Stored locally on this device and excluded from sync.')
       .addText(text => {
         text.inputEl.type = 'password';
         text

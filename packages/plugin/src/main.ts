@@ -40,8 +40,13 @@ export default class VPSVaultSyncPlugin extends Plugin {
     });
 
     this.conflictHandler = new ConflictHandler(this.app);
+    await this.conflictHandler.loadPersistedSnapshots();
+
+    const rawData = await this.loadData();
+    const initialQueue = (rawData && Array.isArray(rawData.offlineQueue)) ? rawData.offlineQueue : [];
+
     this.offlineQueue = new OfflineQueue(
-      [],
+      initialQueue,
       async () => {
         await this.savePluginData();
       }

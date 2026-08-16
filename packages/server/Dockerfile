@@ -28,12 +28,15 @@ ENV VAULT_PATH=/data/vault
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
-# Copy built files from builder stage
-COPY package.json ./
-COPY packages/shared/package.json ./packages/shared/
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY packages/server/package.json ./packages/server/
-COPY --from=builder /app/packages/server/dist ./packages/server/dist
+# Pre-create vault and app directories with proper ownership for node user
+RUN mkdir -p /data/vault /app && chown -R node:node /data /app
+
+# Copy built files from builder stage with proper ownership
+COPY --chown=node:node package.json ./
+COPY --chown=node:node packages/shared/package.json ./packages/shared/
+COPY --chown=node:node --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --chown=node:node packages/server/package.json ./packages/server/
+COPY --chown=node:node --from=builder /app/packages/server/dist ./packages/server/dist
 
 # Install only production dependencies
 RUN npm install --omit=dev

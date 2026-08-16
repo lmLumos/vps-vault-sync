@@ -11,7 +11,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - SYNC_TOKEN=change-this-to-a-strong-secret-token
+      - SYNC_TOKEN=${SYNC_TOKEN}
       - VAULT_PATH=/data/vault
       - ARCHIVE_RETENTION_DAYS=30
     volumes:
@@ -23,6 +23,6 @@ services:
     restart: unless-stopped
     command: tunnel run
     environment:
-      - TUNNEL_TOKEN=your-cloudflare-tunnel-token-here
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     depends_on:
       - sync-server

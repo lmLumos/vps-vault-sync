@@ -197,11 +197,6 @@ export class VaultWatcher {
           chunked: content.length >= 500 * 1024
         };
 
-        // Update base snapshot
-        if (!isBin) {
-          this.plugin.conflictHandler.recordBaseSnapshot(path, content);
-        }
-
         await this.plugin.syncClient.onLocalSyncEvent(event, content);
       } catch (err) {
         console.error(`[VaultWatcher] Failed to process change on ${path}:`, err);

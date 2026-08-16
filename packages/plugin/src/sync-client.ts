@@ -279,21 +279,60 @@ export class SyncClient {
 
   public async processOfflineQueue(): Promise<void> {
     if (!this.isConnected()) return;
-    const queue = this.plugin.offlineQueue.getQueue();
+    const queue = this.plugin.offlineQueue.getEvents();
     if (!queue || queue.length === 0) return;
 
     this.logActivity('info', '', `Processing ${queue.length} offline queued items...`);
     const remaining: SyncEvent[] = [];
+    const adapter = this.app.vault.adapter;
 
     for (const event of queue) {
       try {
-        await this.onLocalSyncEvent(event);
+        if (event.type === 'create' || event.type === 'modify') {
+          if (await adapter.exists(event.path)) {
+            const isBin = event.isBinary ?? isBinaryFile(event.path);
+            let content = '';
+            let hash = '';
+            if (isBin) {
+              const buf = await adapter.readBinary(event.path);
+              content = Buffer.from(buf).toString('base64');
+              hash = hashBuffer(buf);
+            } else {
+              content = await adapter.read(event.path);
+              hash = hashString(content);
+            }
+            const stat = await adapter.stat(event.path);
+            const freshEvent: FileCreateOrModifyEvent = {
+              ...event,
+              content,
+              hash,
+              mtime: stat?.mtime || event.mtime || Date.now(),
+              size: stat?.size || content.length,
+              isBinary: isBin
+            };
+            await this.onLocalSyncEvent(freshEvent, content);
+          }
+        } else if (event.type === 'rename') {
+          let content: string | undefined;
+          if (await adapter.exists(event.newPath)) {
+            const isBin = event.isBinary ?? isBinaryFile(event.newPath);
+            if (isBin) {
+              const buf = await adapter.readBinary(event.newPath);
+              content = Buffer.from(buf).toString('base64');
+            } else {
+              content = await adapter.read(event.newPath);
+            }
+          }
+          await this.onLocalSyncEvent(event, content);
+        } else {
+          await this.onLocalSyncEvent(event);
+        }
       } catch {
         remaining.push(event);
       }
     }
 
-    this.plugin.offlineQueue.clear();
+    await this.plugin.offlineQueue.clear();
     for (const item of remaining) {
       await this.plugin.offlineQueue.enqueue(item);
     }
@@ -737,6 +776,10 @@ export class SyncClient {
           this.logActivity('conflict', event.path, `Server collision: conflict saved as ${resp.conflictPath}`);
           new Notice(`⚠️ Server Conflict on ${event.path}. Backup saved as ${resp.conflictPath}`);
         } else {
+          // Record base snapshot only after successful server confirmation (Issue 13)
+          if (!event.isBinary && contentToSend) {
+            this.plugin.conflictHandler.recordBaseSnapshot(event.path, contentToSend);
+          }
           this.logActivity('upload', event.path, `Uploaded ${event.type}`);
         }
       } else {
@@ -845,6 +888,10 @@ export class SyncClient {
               hash
             });
 
+            if (!isBin && contentStr) {
+              this.plugin.conflictHandler.recordBaseSnapshot(p, contentStr);
+            }
+
             this.logActivity('upload', p, 'Reconciliation: Uploaded to server');
           }
         } catch (err) {
@@ -853,12 +900,7 @@ export class SyncClient {
       }
 
       // 3. Flush any queued offline events
-      while (this.plugin.offlineQueue.size() > 0) {
-        const evt = await this.plugin.offlineQueue.dequeue();
-        if (evt) {
-          await this.onLocalSyncEvent(evt);
-        }
-      }
+      await this.processOfflineQueue();
 
       this.plugin.settings.lastSyncedTimestamp = Date.now();
       await this.plugin.saveSettings();

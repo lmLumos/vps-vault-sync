@@ -5,8 +5,20 @@ export class OfflineQueue {
   private saveCallback: () => Promise<void>;
 
   constructor(initialQueue: SyncEvent[] = [], saveCallback: () => Promise<void>) {
-    this.queue = [...initialQueue];
+    this.queue = initialQueue.map(e => this.stripContent(e));
     this.saveCallback = saveCallback;
+  }
+
+  private stripContent(event: SyncEvent): SyncEvent {
+    if (event.type === 'create' || event.type === 'modify') {
+      const { content, ...rest } = event;
+      return rest as SyncEvent;
+    }
+    if (event.type === 'rename') {
+      const { content, ...rest } = event;
+      return rest as SyncEvent;
+    }
+    return event;
   }
 
   public getEvents(): SyncEvent[] {
@@ -18,7 +30,8 @@ export class OfflineQueue {
   }
 
   public async enqueue(event: SyncEvent): Promise<void> {
-    const targetPath = 'path' in event ? event.path : ('newPath' in event ? event.newPath : '');
+    const lightweight = this.stripContent(event);
+    const targetPath = 'path' in lightweight ? lightweight.path : ('newPath' in lightweight ? lightweight.newPath : '');
 
     // Deduplicate: if there is already an event for this path, update or replace it
     const existingIndex = this.queue.findIndex(e => {
@@ -27,9 +40,9 @@ export class OfflineQueue {
     });
 
     if (existingIndex !== -1) {
-      this.queue[existingIndex] = event;
+      this.queue[existingIndex] = lightweight;
     } else {
-      this.queue.push(event);
+      this.queue.push(lightweight);
     }
 
     await this.saveCallback();
@@ -49,6 +62,6 @@ export class OfflineQueue {
   }
 
   public serialize(): SyncEvent[] {
-    return this.queue;
+    return this.queue.map(e => this.stripContent(e));
   }
 }
