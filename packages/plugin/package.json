@@ -1,6 +1,6 @@
 {
   "name": "@vps-vault-sync/obsidian-plugin",
-  "version": "1.0.0",
+  "version": "1.1.3",
   "description": "Obsidian Plugin for live bidirectional synchronization with a self-hosted VPS server",
   "main": "main.js",
   "scripts": {

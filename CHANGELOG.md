@@ -7,35 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.1] - 2026-08-16
+## [1.1.3] - 2026-08-16
 
-### Fixed
-- **Docker Multi-Stage Build**: Updated runner stage in Dockerfile to copy compiled artifacts (`dist/`) directly from the `builder` stage.
-- **WebSocket Heartbeat & Keepalive**: Added `pong` and `ping` frame event listeners to ensure idle WebSocket connections remain active indefinitely across proxies without timing out.
-- **Production Verification**: Validated live bidirectional sync on production Debian VPS alongside Cloudflare Tunnel and Nginx reverse proxy.
+### Security & Reliability Hardening
+- **Directory Traversal Protection (Issue #1 & #8)**: Implemented strict directory boundary containment validation in `VaultManager.getAbsolutePath()` and `getRelativePath()` ensuring all resolved file paths remain strictly contained within the vault directory root. Rejects attempts to traverse outside the vault via relative path escaping (`../`, `..\`), internal traversals, cross-platform backslash normalizations, absolute paths, null-byte injections, or URL-encoded sequences across `readFile()`, `writeFile()`, `deleteFile()`, `getMetadata()`, and `ensureDirectory()`. Added strict source and destination path containment checks to `VaultManager.renameFile()`.
 - **Authentication Secret Enforcement (Issue #2)**: Enforced required `SYNC_TOKEN` / `VAULT_SYNC_TOKEN` environment variable configuration on server startup in non-test environments, terminating with a fatal error instead of silently falling back to a hardcoded default token.
 - **Header-Only Authentication (Issue #3)**: Restricted HTTP API token extraction strictly to the `Authorization: Bearer <token>` header, removing support for `?token=` query parameters to prevent credential leakage into reverse proxy logs and browser history.
-- **Timing-Safe Auth & Rate Limiting (Issue #4)**: Implemented constant-time token comparison using `crypto.timingSafeEqual` to prevent timing side-channel leaks, and added per-IP authentication failure throttling (`AuthRateLimiter`) returning HTTP 429 and WebSocket rate-limit rejections after 5 failed attempts.
+- **Timing-Safe Auth & Rate Limiting (Issue #4)**: Implemented constant-time token comparison using `crypto.timingSafeEqual` to prevent timing side-channel leaks, and added per-IP authentication failure throttling (`AuthRateLimiter`) returning HTTP 429 and WebSocket rate-limit rejections after 5 failed attempts. Normalized IPv4-mapped IPv6 sockets (`::ffff:`) and localhost loopbacks.
 - **Restricted CORS Policy (Issue #5)**: Removed wildcard `Access-Control-Allow-Origin: *`, restricting CORS access exclusively to trusted localhost and Obsidian application origins (`app://obsidian.md`, `capacitor://localhost`).
-- **Directory Traversal Protection (Issue #1)**: Implemented strict directory boundary containment validation in `VaultManager.getAbsolutePath()` and `getRelativePath()` ensuring all resolved file paths remain strictly contained within the vault directory root. Rejects attempts to traverse outside the vault via relative path escaping (`../`, `..\`), internal traversals, absolute paths, null-byte injections, or URL-encoded sequences across `readFile()`, `writeFile()`, `deleteFile()`, `getMetadata()`, and `ensureDirectory()`.
-- **Rename Operation Traversal Safeguards (Issue #8)**: Added strict source and destination path containment checks to `VaultManager.renameFile()`, preventing arbitrary file moves to or from external host locations outside the vault directory.
+- **Authentication Token & Plugin Data Protection (Issue #6)**: Hardcoded non-overridable ignore rules in `IgnoreFilter` ensuring `.obsidian/plugins/vps-vault-sync/data.json` cannot be synchronized to remote servers, and added token storage security guidance in plugin settings.
+- **TLS Enforcement & Cleartext Warnings (Issue #7)**: Added server console security warnings on startup when binding to public network interfaces without TLS, and added visual UI warnings in plugin settings when insecure `ws://` or `http://` transport is configured on non-localhost hosts.
 - **WebSocket Payload Limits & Auth Timeout (Issue #9)**: Configured a 25MB `maxPayload` limit on `WebSocketServer` and implemented a 10-second authentication timeout that terminates unauthenticated connections to mitigate Slowloris resource exhaustion.
 - **HTTP File Upload Byte Size Verification & Abort Safety (Issue #10)**: Updated `POST /api/file` to track exact buffer byte lengths rather than string characters and added an abort flag preventing file writing or double-response errors when requests exceed `maxFileSizeBytes`.
 - **Server 3-Way Merge Base Retrieval (Issue #12)**: Implemented ancestor revision lookup via `ArchiveManager.getArchivedVersion()` matching `baseHash` when performing server-side 3-way line merges in `VaultManager.writeFile()`, enabling clean automated merges for non-conflicting concurrent edits.
-- **Temporary Atomic Write Watcher Race (Issue #19)**: Updated temporary file naming format and added `**/*.tmp.*` to `DEFAULT_SYNC_OPTIONS.ignoredPatterns` to prevent `chokidar` from intercepting in-flight atomic write files and logging spurious ENOENT errors.
-- **Health Check Information Leakage (Issue #20)**: Removed connected client count and protocol version disclosures from the unauthenticated `GET /health` endpoint.
-- **Authentication Token & Plugin Data Protection (Issue #6)**: Hardcoded non-overridable ignore rules in `IgnoreFilter` ensuring `.obsidian/plugins/vps-vault-sync/data.json` cannot be synchronized to remote servers, and added token storage security guidance in plugin settings.
-- **TLS Enforcement & Cleartext Warnings (Issue #7)**: Added server console security warnings on startup when binding to public network interfaces without TLS, and added visual UI warnings in plugin settings when insecure `ws://` or `http://` transport is configured on non-localhost hosts.
 - **Post-Confirmation Base Snapshot Recording (Issue #13)**: Removed premature client-side ancestor updates on local typing debounce in `VaultWatcher`; ancestor snapshots in `ConflictHandler` are now recorded only upon confirmed receipt by the server (`FILE_PUT_RESPONSE`), preventing concurrent remote edits from colliding against premature ancestor states.
 - **Deletion Restoration Loop Prevention & Tombstones (Issue #14)**: Implemented persistent tombstone tracking in `VaultManager` and updated `computeDiff()` to accurately populate `toDeleteOnServer` and `toDeleteOnClient`. Prevents deleted files from being resurrected into infinite download loops during manifest diff reconciliation when clients reconnect or files are deleted offline.
 - **Persistent Base Snapshots Across Restarts (Issue #15)**: Added automatic persistence of `ConflictHandler` base snapshots to local storage (`snapshots.json`), eliminating false conflict generation following Obsidian application restarts.
 - **Docker Mount Permissions (Issue #16)**: Pre-created `/data/vault` and `/app` directories with `node:node` ownership and configured `COPY --chown=node:node` in `packages/server/Dockerfile` to avoid permission denied errors when bind-mounting host directories.
 - **Lightweight Offline Queue Storage (Issue #17)**: Stripped heavy file content payloads from `OfflineQueue` before saving to `data.json`, hydrating full file contents from the local vault adapter upon reconnection replay to prevent settings file bloating.
 - **Docker Compose Secret Management (Issue #18)**: Replaced hardcoded placeholder tokens in `docker-compose.yml`, `docker-compose.caddy.yml`, and `cloudflare-tunnel` compose files with `${SYNC_TOKEN}` environment variable interpolation, and created `.env.example` deployment template.
+- **Temporary Atomic Write Watcher Race (Issue #19)**: Updated temporary file naming format and added `**/*.tmp.*` to `DEFAULT_SYNC_OPTIONS.ignoredPatterns` to prevent `chokidar` from intercepting in-flight atomic write files and logging spurious ENOENT errors.
+- **Health Check Information Leakage (Issue #20)**: Removed connected client count and protocol version disclosures from the unauthenticated `GET /health` endpoint.
+- **Streaming Manifest Hashing (Issue #21)**: Switched to streaming SHA-256 computation with `crypto.createHash('sha256')` and `fs.createReadStream()` to avoid memory spikes on large files.
 - **SVG File Classification (Issue #22)**: Removed `.svg` from `binaryExtensions` in `@vps-vault-sync/shared` so vector assets are classified as text format, avoiding base64 encoding overhead and enabling text-based merge capabilities.
 - **Protocol Version Negotiation (Issue #23)**: Added handshake verification in `SyncServer` ensuring client protocol versions strictly match `PROTOCOL_VERSION` before allowing authentication.
 - **Cryptographic Event ID Generation (Issue #24)**: Replaced non-cryptographic timestamp/random string IDs with `crypto.randomUUID()` across `SyncServer` and `VaultWatcher`.
 - **Ignore Filter Comment Clarification (Issue #25)**: Updated misleading comment in `IgnoreFilter.isIgnored()` to accurately state that empty and root-only paths are ignored.
+
+## [1.1.2] - 2026-08-16
+
+### Fixed
+- **Folder Icon Live Repaint**: Cleared `registeredFileExplorers` set and cleaned existing DOM icon nodes to force live repaint when icon packs or folder icon configurations change.
+
+## [1.1.1] - 2026-08-16
+
+### Fixed
+- **Minimal Theme Reload**: Accurately swap color scheme classes without forcing light mode reset.
+
+## [1.1.0] - 2026-08-16
+
+### Added
+- **Hot-Reload In-Place Mutation**: Streamline direct in-place plugin mutation hooks without disabling plugins.
 
 ## [1.0.0] - 2026-08-16
 

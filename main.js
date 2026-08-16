@@ -59,6 +59,7 @@ var require_types = __commonJS({
         "**/Thumbs.db",
         "**/desktop.ini",
         "**/*.tmp",
+        "**/*.tmp.*",
         "**/*.swp",
         "**/*~",
         ".obsidian/cache/**",
@@ -220,7 +221,6 @@ var require_hash = __commonJS({
         "gif",
         "webp",
         "bmp",
-        "svg",
         "ico",
         "pdf",
         "epub",
@@ -1866,6 +1866,9 @@ var require_ignore = __commonJS({
         const normalized = rawPath.replace(/\\/g, "/").replace(/^\/+/, "");
         if (!normalized)
           return true;
+        if (normalized === ".obsidian/plugins/vps-vault-sync/data.json" || normalized.endsWith("/.obsidian/plugins/vps-vault-sync/data.json") || normalized.startsWith(".obsidian/plugins/vps-vault-sync/data.json") || normalized.startsWith(".sync-archive/") || normalized.startsWith(".git/")) {
+          return true;
+        }
         for (const regex of this.patterns) {
           if (regex.test(normalized)) {
             return true;
@@ -1947,11 +1950,23 @@ var SyncSettingTab = class extends import_obsidian.PluginSettingTab {
       text: "Synchronize your notes, attachments, themes, and plugins seamlessly in real time with your VPS server.",
       cls: "setting-item-description"
     });
-    new import_obsidian.Setting(containerEl).setName("Server URL").setDesc("WebSocket or HTTP address of your VPS sync server (e.g. wss://sync.yourdomain.com or ws://192.168.1.100:3000)").addText((text) => text.setPlaceholder("wss://sync.example.com").setValue(this.plugin.settings.serverUrl).onChange(async (value) => {
+    const serverUrlSetting = new import_obsidian.Setting(containerEl).setName("Server URL").setDesc("WebSocket or HTTP address of your VPS sync server (e.g. wss://sync.yourdomain.com). For non-local hosts, wss:// or https:// is strongly recommended.").addText((text) => text.setPlaceholder("wss://sync.example.com").setValue(this.plugin.settings.serverUrl).onChange(async (value) => {
       this.plugin.settings.serverUrl = value.trim();
       await this.plugin.saveSettings();
+      this.display();
     }));
-    new import_obsidian.Setting(containerEl).setName("Secret API Token").setDesc("The secret authentication token configured on your VPS server (SYNC_TOKEN).").addText((text) => {
+    const url = this.plugin.settings.serverUrl.trim().toLowerCase();
+    const isInsecure = (url.startsWith("ws://") || url.startsWith("http://")) && !url.includes("localhost") && !url.includes("127.0.0.1") && !url.includes("[::1]");
+    if (isInsecure) {
+      const warnEl = containerEl.createEl("div", {
+        cls: "setting-item-description",
+        text: "\u26A0\uFE0F Security Warning: Unencrypted transport (ws:// or http://) in use for a non-local host. Note contents and authentication tokens will be transmitted in cleartext over the network. We strongly recommend configuring TLS with wss:// via a reverse proxy (Caddy, Nginx, or Cloudflare Tunnel)."
+      });
+      warnEl.style.color = "var(--text-warning, #e5a50a)";
+      warnEl.style.marginBottom = "12px";
+      warnEl.style.fontSize = "12px";
+    }
+    new import_obsidian.Setting(containerEl).setName("Secret API Token").setDesc("The secret authentication token configured on your VPS server (SYNC_TOKEN). Stored locally on this device and excluded from sync.").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("Enter your secret token").setValue(this.plugin.settings.authToken).onChange(async (value) => {
         this.plugin.settings.authToken = value.trim();
@@ -2241,19 +2256,58 @@ var SyncClient = class {
   async processOfflineQueue() {
     if (!this.isConnected())
       return;
-    const queue = this.plugin.offlineQueue.getQueue();
+    const queue = this.plugin.offlineQueue.getEvents();
     if (!queue || queue.length === 0)
       return;
     this.logActivity("info", "", `Processing ${queue.length} offline queued items...`);
     const remaining = [];
+    const adapter = this.app.vault.adapter;
     for (const event of queue) {
       try {
-        await this.onLocalSyncEvent(event);
+        if (event.type === "create" || event.type === "modify") {
+          if (await adapter.exists(event.path)) {
+            const isBin = event.isBinary ?? (0, import_shared.isBinaryFile)(event.path);
+            let content = "";
+            let hash = "";
+            if (isBin) {
+              const buf = await adapter.readBinary(event.path);
+              content = Buffer.from(buf).toString("base64");
+              hash = (0, import_shared.hashBuffer)(buf);
+            } else {
+              content = await adapter.read(event.path);
+              hash = (0, import_shared.hashString)(content);
+            }
+            const stat = await adapter.stat(event.path);
+            const freshEvent = {
+              ...event,
+              content,
+              hash,
+              mtime: stat?.mtime || event.mtime || Date.now(),
+              size: stat?.size || content.length,
+              isBinary: isBin
+            };
+            await this.onLocalSyncEvent(freshEvent, content);
+          }
+        } else if (event.type === "rename") {
+          let content;
+          if (await adapter.exists(event.newPath)) {
+            const isBin = event.isBinary ?? (0, import_shared.isBinaryFile)(event.newPath);
+            if (isBin) {
+              const buf = await adapter.readBinary(event.newPath);
+              content = Buffer.from(buf).toString("base64");
+            } else {
+              content = await adapter.read(event.newPath);
+            }
+          }
+          await this.onLocalSyncEvent(event, content);
+        } else {
+          await this.onLocalSyncEvent(event);
+        }
       } catch {
         remaining.push(event);
       }
     }
-    this.plugin.offlineQueue.clear();
+    await this.plugin.offlineQueue.clear();
     for (const item of remaining) {
       await this.plugin.offlineQueue.enqueue(item);
     }
@@ -2655,6 +2709,9 @@ var SyncClient = class {
           this.logActivity("conflict", event.path, `Server collision: conflict saved as ${resp.conflictPath}`);
           new import_obsidian2.Notice(`\u26A0\uFE0F Server Conflict on ${event.path}. Backup saved as ${resp.conflictPath}`);
         } else {
+          if (!event.isBinary && contentToSend) {
+            this.plugin.conflictHandler.recordBaseSnapshot(event.path, contentToSend);
+          }
           this.logActivity("upload", event.path, `Uploaded ${event.type}`);
         }
       } else {
@@ -2751,18 +2808,16 @@ var SyncClient = class {
               mtime: stat?.mtime || Date.now(),
               hash
             });
+            if (!isBin && contentStr) {
+              this.plugin.conflictHandler.recordBaseSnapshot(p, contentStr);
+            }
             this.logActivity("upload", p, "Reconciliation: Uploaded to server");
           }
         } catch (err) {
           console.error(`[SyncClient] Failed to upload ${p}:`, err);
         }
       }
-      while (this.plugin.offlineQueue.size() > 0) {
-        const evt = await this.plugin.offlineQueue.dequeue();
-        if (evt) {
-          await this.onLocalSyncEvent(evt);
-        }
-      }
+      await this.processOfflineQueue();
       this.plugin.settings.lastSyncedTimestamp = Date.now();
       await this.plugin.saveSettings();
       this.logActivity("info", "", "Reconciliation complete! Vault is in sync.");
@@ -2989,9 +3044,6 @@ var VaultWatcher = class {
           content: content.length < 500 * 1024 ? content : void 0,
           chunked: content.length >= 500 * 1024
         };
-        if (!isBin) {
-          this.plugin.conflictHandler.recordBaseSnapshot(path, content);
-        }
         await this.plugin.syncClient.onLocalSyncEvent(event, content);
       } catch (err) {
         console.error(`[VaultWatcher] Failed to process change on ${path}:`, err);
@@ -3113,19 +3165,63 @@ var VaultWatcher = class {
 var import_obsidian4 = require("obsidian");
 var import_shared3 = __toESM(require_dist());
 var ConflictHandler = class {
-  // path -> content snapshot when last synced
   constructor(app) {
     this.baseSnapshots = /* @__PURE__ */ new Map();
+    // path -> content snapshot when last synced
+    this.storagePath = ".obsidian/plugins/vps-vault-sync/snapshots.json";
+    this.saveTimeout = null;
     this.app = app;
+  }
+  async loadPersistedSnapshots() {
+    try {
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists(this.storagePath)) {
+        const raw = await adapter.read(this.storagePath);
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "object" && parsed !== null) {
+          for (const [path, snapshot] of Object.entries(parsed)) {
+            if (typeof snapshot === "string") {
+              this.baseSnapshots.set(path, snapshot);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[ConflictHandler] Could not load persisted base snapshots:", err);
+    }
+  }
+  async savePersistedSnapshots() {
+    if (this.saveTimeout !== null) {
+      window.clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = window.setTimeout(async () => {
+      this.saveTimeout = null;
+      try {
+        const adapter = this.app.vault.adapter;
+        const parentDir = this.storagePath.substring(0, this.storagePath.lastIndexOf("/"));
+        if (parentDir && !await adapter.exists(parentDir)) {
+          await adapter.mkdir(parentDir);
+        }
+        const obj = {};
+        for (const [p, content] of this.baseSnapshots.entries()) {
+          obj[p] = content;
+        }
+        await adapter.write(this.storagePath, JSON.stringify(obj));
+      } catch (err) {
+        console.warn("[ConflictHandler] Could not persist base snapshots:", err);
+      }
+    }, 1e3);
   }
   recordBaseSnapshot(path, content) {
     this.baseSnapshots.set(path, content);
+    this.savePersistedSnapshots();
   }
   getBaseSnapshot(path) {
     return this.baseSnapshots.get(path) || "";
   }
   removeBaseSnapshot(path) {
     this.baseSnapshots.delete(path);
+    this.savePersistedSnapshots();
   }
   /**
    * Resolves a potentially conflicting incoming file update.
@@ -3179,8 +3275,19 @@ var ConflictHandler = class {
 var OfflineQueue = class {
   constructor(initialQueue = [], saveCallback) {
     this.queue = [];
-    this.queue = [...initialQueue];
+    this.queue = initialQueue.map((e) => this.stripContent(e));
     this.saveCallback = saveCallback;
+  }
+  stripContent(event) {
+    if (event.type === "create" || event.type === "modify") {
+      const { content, ...rest } = event;
+      return rest;
+    }
+    if (event.type === "rename") {
+      const { content, ...rest } = event;
+      return rest;
+    }
+    return event;
   }
   getEvents() {
     return [...this.queue];
@@ -3189,15 +3296,16 @@ var OfflineQueue = class {
     return this.queue.length;
   }
   async enqueue(event) {
-    const targetPath = "path" in event ? event.path : "newPath" in event ? event.newPath : "";
+    const lightweight = this.stripContent(event);
+    const targetPath = "path" in lightweight ? lightweight.path : "newPath" in lightweight ? lightweight.newPath : "";
     const existingIndex = this.queue.findIndex((e) => {
       const p = "path" in e ? e.path : "newPath" in e ? e.newPath : "";
       return p === targetPath;
     });
     if (existingIndex !== -1) {
-      this.queue[existingIndex] = event;
+      this.queue[existingIndex] = lightweight;
     } else {
-      this.queue.push(event);
+      this.queue.push(lightweight);
     }
     await this.saveCallback();
   }
@@ -3213,7 +3321,7 @@ var OfflineQueue = class {
     await this.saveCallback();
   }
   serialize() {
-    return this.queue;
+    return this.queue.map((e) => this.stripContent(e));
   }
 };
 
@@ -3371,8 +3479,11 @@ var VPSVaultSyncPlugin = class extends import_obsidian6.Plugin {
       syncWorkspace: this.settings.syncWorkspace
     });
     this.conflictHandler = new ConflictHandler(this.app);
+    await this.conflictHandler.loadPersistedSnapshots();
+    const rawData = await this.loadData();
+    const initialQueue = rawData && Array.isArray(rawData.offlineQueue) ? rawData.offlineQueue : [];
     this.offlineQueue = new OfflineQueue(
-      [],
+      initialQueue,
       async () => {
         await this.savePluginData();
       }
