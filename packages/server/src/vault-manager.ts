@@ -148,16 +148,20 @@ export class VaultManager {
       throw new Error('Security Error: Directory traversal attempt blocked');
     }
 
+    // Normalize Windows backslashes to forward slashes for cross-platform containment checks
+    const normalized = relativePath.replace(/\\/g, '/');
+
     // Check for URI-encoded traversal attempts (e.g. %2e%2e)
     try {
-      const decoded = decodeURIComponent(relativePath);
-      if (decoded !== relativePath) {
-        const decodedResolved = path.resolve(this.vaultPath, decoded);
+      const decoded = decodeURIComponent(normalized);
+      if (decoded !== normalized) {
+        const decodedNormalized = decoded.replace(/\\/g, '/');
+        const decodedResolved = path.resolve(this.vaultPath, decodedNormalized);
         const rootWithSep = this.vaultPath.endsWith(path.sep) ? this.vaultPath : this.vaultPath + path.sep;
         const isDecodedContained = process.platform === 'win32'
           ? (decodedResolved.toLowerCase() === this.vaultPath.toLowerCase() || decodedResolved.toLowerCase().startsWith(rootWithSep.toLowerCase()))
           : (decodedResolved === this.vaultPath || decodedResolved.startsWith(rootWithSep));
-        if (!isDecodedContained) {
+        if (!isDecodedContained || (process.platform !== 'win32' && /^[a-zA-Z]:/.test(decodedNormalized))) {
           throw new Error('Security Error: Directory traversal attempt blocked');
         }
       }
@@ -167,7 +171,12 @@ export class VaultManager {
       }
     }
 
-    const resolved = path.resolve(this.vaultPath, relativePath);
+    // Explicit check for Windows drive paths on non-Windows platforms
+    if (process.platform !== 'win32' && /^[a-zA-Z]:/.test(normalized)) {
+      throw new Error('Security Error: Directory traversal attempt blocked');
+    }
+
+    const resolved = path.resolve(this.vaultPath, normalized);
     const rootWithSep = this.vaultPath.endsWith(path.sep) ? this.vaultPath : this.vaultPath + path.sep;
 
     const isContained = process.platform === 'win32'

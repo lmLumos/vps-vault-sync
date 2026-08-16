@@ -57,25 +57,27 @@ export class AuthRateLimiter {
   }
 
   public isBlocked(ip: string): boolean {
-    const record = this.attempts.get(ip);
+    const normalizedIp = normalizeIp(ip);
+    const record = this.attempts.get(normalizedIp);
     if (!record) return false;
     const now = Date.now();
     if (record.blockedUntil && now < record.blockedUntil) {
       return true;
     }
     if (now - record.firstAttempt > this.windowMs && (!record.blockedUntil || now >= record.blockedUntil)) {
-      this.attempts.delete(ip);
+      this.attempts.delete(normalizedIp);
       return false;
     }
     return false;
   }
 
   public recordFailure(ip: string): void {
+    const normalizedIp = normalizeIp(ip);
     const now = Date.now();
-    let record = this.attempts.get(ip);
+    let record = this.attempts.get(normalizedIp);
     if (!record || now - record.firstAttempt > this.windowMs) {
       record = { count: 1, firstAttempt: now, lastAttempt: now };
-      this.attempts.set(ip, record);
+      this.attempts.set(normalizedIp, record);
     } else {
       record.count += 1;
       record.lastAttempt = now;
@@ -87,7 +89,8 @@ export class AuthRateLimiter {
   }
 
   public recordSuccess(ip: string): void {
-    this.attempts.delete(ip);
+    const normalizedIp = normalizeIp(ip);
+    this.attempts.delete(normalizedIp);
   }
 
   public reset(): void {
@@ -95,15 +98,27 @@ export class AuthRateLimiter {
   }
 }
 
+export function normalizeIp(ip: string): string {
+  if (ip.startsWith('::ffff:')) {
+    return ip.substring(7);
+  }
+  if (ip === '::1') {
+    return '127.0.0.1';
+  }
+  return ip;
+}
+
 function getClientIp(req: http.IncomingMessage | { headers: http.IncomingHttpHeaders; socket?: { remoteAddress?: string } }): string {
+  let ip = '127.0.0.1';
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
+    ip = forwarded.split(',')[0].trim();
+  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
+    ip = forwarded[0].trim();
+  } else if (req.socket?.remoteAddress) {
+    ip = req.socket.remoteAddress;
   }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0].trim();
-  }
-  return req.socket?.remoteAddress || '127.0.0.1';
+  return normalizeIp(ip);
 }
 
 interface ClientSession {
