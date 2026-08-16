@@ -2451,16 +2451,43 @@ var SyncClient = class {
                 if (pluginId === "obsidian-icon-folder" || pluginId === "iconize") {
                   try {
                     const text = await this.app.vault.adapter.read(normalizedPath);
-                    pluginInstance.data = Object.assign({}, pluginInstance.data, JSON.parse(text));
-                  } catch {
+                    const parsedData = JSON.parse(text);
+                    pluginInstance.data = Object.assign({}, pluginInstance.data, parsedData);
+                    if (pluginInstance.registeredFileExplorers && typeof pluginInstance.registeredFileExplorers.clear === "function") {
+                      pluginInstance.registeredFileExplorers.clear();
+                    }
+                    if (typeof pluginInstance.loadIconFolderData === "function") {
+                      await pluginInstance.loadIconFolderData();
+                    }
+                    if (typeof pluginInstance.handleChangeLayout === "function") {
+                      pluginInstance.handleChangeLayout();
+                    }
+                    const fileExplorers = this.app.workspace.getLeavesOfType("file-explorer");
+                    for (const fe of fileExplorers) {
+                      const fileItems = fe.view?.fileItems;
+                      if (fileItems) {
+                        for (const folderPath of Object.keys(pluginInstance.data)) {
+                          if (folderPath === "settings")
+                            continue;
+                          const item = fileItems[folderPath];
+                          if (item?.selfEl) {
+                            const oldIcon = item.selfEl.querySelector(".iconize-icon");
+                            if (oldIcon)
+                              oldIcon.remove();
+                          }
+                        }
+                      }
+                    }
+                    if (pluginInstance.registeredFileExplorers && typeof pluginInstance.registeredFileExplorers.clear === "function") {
+                      pluginInstance.registeredFileExplorers.clear();
+                    }
+                    if (typeof pluginInstance.handleChangeLayout === "function") {
+                      pluginInstance.handleChangeLayout();
+                    }
+                    this.app.workspace.trigger("layout-change");
+                  } catch (err) {
+                    console.warn("[SyncClient] Error updating icon folder:", err);
                   }
-                  if (typeof pluginInstance.loadIconFolderData === "function") {
-                    await pluginInstance.loadIconFolderData();
-                  }
-                  if (typeof pluginInstance.handleChangeLayout === "function") {
-                    pluginInstance.handleChangeLayout();
-                  }
-                  this.app.workspace.trigger("layout-change");
                 }
                 if (pluginId === "obsidian-minimal-settings") {
                   try {
