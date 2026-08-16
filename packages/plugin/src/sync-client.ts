@@ -513,31 +513,77 @@ export class SyncClient {
               (Array.isArray(plugins.enabledPlugins) && plugins.enabledPlugins.includes(pluginId))
             );
 
-            // If plugin is enabled, reload it so it reads new data.json
+            // If plugin is enabled, trigger its exact in-memory reload functions
             if (isEnabled) {
               console.log(`[SyncClient] Live reloading plugin "${pluginId}" after sync...`);
+              const pluginInstance = plugins.plugins?.[pluginId];
+
+              // 1. Direct in-place hook calls for specific plugins
+              if (pluginInstance) {
+                // Folder Icons / Iconize
+                if (typeof pluginInstance.loadIconFolderData === 'function') {
+                  await pluginInstance.loadIconFolderData();
+                  if (typeof pluginInstance.handleChangeLayout === 'function') {
+                    pluginInstance.handleChangeLayout();
+                  }
+                }
+
+                // Minimal Theme Settings
+                if (typeof pluginInstance.loadSettings === 'function') {
+                  await pluginInstance.loadSettings();
+                  if (typeof pluginInstance.refresh === 'function') pluginInstance.refresh();
+                  if (typeof pluginInstance.updateDarkScheme === 'function') pluginInstance.updateDarkScheme();
+                  if (typeof pluginInstance.updateLightScheme === 'function') pluginInstance.updateLightScheme();
+                  if (typeof pluginInstance.updateDarkStyle === 'function') pluginInstance.updateDarkStyle();
+                  if (typeof pluginInstance.updateLightStyle === 'function') pluginInstance.updateLightStyle();
+                }
+
+                // Style Settings
+                if (pluginInstance.settingsManager) {
+                  if (typeof pluginInstance.settingsManager.load === 'function') {
+                    await pluginInstance.settingsManager.load();
+                  }
+                  if (typeof pluginInstance.settingsManager.initClasses === 'function') {
+                    pluginInstance.settingsManager.initClasses();
+                  }
+                  if (typeof pluginInstance.settingsManager.setCSSVariables === 'function') {
+                    pluginInstance.settingsManager.setCSSVariables();
+                  }
+                }
+
+                // Generic plugin settings re-read
+                if (typeof pluginInstance.loadData === 'function' && typeof pluginInstance.settings === 'object') {
+                  pluginInstance.settings = Object.assign({}, pluginInstance.settings, await pluginInstance.loadData());
+                }
+              }
+
+              // 2. Full disable/enable reload
               if (typeof plugins.disablePlugin === 'function' && typeof plugins.enablePlugin === 'function') {
                 await plugins.disablePlugin(pluginId);
                 await plugins.enablePlugin(pluginId);
               }
 
-              // Trigger internal hooks on newly initialized instance if available
+              // 3. Post-reload invocation on fresh instance
               const newInstance = plugins.plugins?.[pluginId];
               if (newInstance) {
                 if (typeof newInstance.loadIconFolderData === 'function') {
                   await newInstance.loadIconFolderData();
                 }
+                if (typeof newInstance.handleChangeLayout === 'function') {
+                  newInstance.handleChangeLayout();
+                }
                 if (typeof newInstance.loadSettings === 'function') {
                   await newInstance.loadSettings();
                 }
-                if (typeof newInstance.handleChangeLayout === 'function') {
-                  newInstance.handleChangeLayout();
+                if (typeof newInstance.refresh === 'function') {
+                  newInstance.refresh();
                 }
               }
             }
 
             // Always trigger CSS change for style plugins (Minimal, Style Settings, etc.)
             this.app.workspace.trigger('css-change');
+            this.app.workspace.trigger('layout-change');
 
             // Refresh file explorer views so icon changes render immediately
             const leaves = this.app.workspace.getLeavesOfType('file-explorer');

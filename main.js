@@ -2445,6 +2445,42 @@ var SyncClient = class {
             );
             if (isEnabled) {
               console.log(`[SyncClient] Live reloading plugin "${pluginId}" after sync...`);
+              const pluginInstance = plugins.plugins?.[pluginId];
+              if (pluginInstance) {
+                if (typeof pluginInstance.loadIconFolderData === "function") {
+                  await pluginInstance.loadIconFolderData();
+                  if (typeof pluginInstance.handleChangeLayout === "function") {
+                    pluginInstance.handleChangeLayout();
+                  }
+                }
+                if (typeof pluginInstance.loadSettings === "function") {
+                  await pluginInstance.loadSettings();
+                  if (typeof pluginInstance.refresh === "function")
+                    pluginInstance.refresh();
+                  if (typeof pluginInstance.updateDarkScheme === "function")
+                    pluginInstance.updateDarkScheme();
+                  if (typeof pluginInstance.updateLightScheme === "function")
+                    pluginInstance.updateLightScheme();
+                  if (typeof pluginInstance.updateDarkStyle === "function")
+                    pluginInstance.updateDarkStyle();
+                  if (typeof pluginInstance.updateLightStyle === "function")
+                    pluginInstance.updateLightStyle();
+                }
+                if (pluginInstance.settingsManager) {
+                  if (typeof pluginInstance.settingsManager.load === "function") {
+                    await pluginInstance.settingsManager.load();
+                  }
+                  if (typeof pluginInstance.settingsManager.initClasses === "function") {
+                    pluginInstance.settingsManager.initClasses();
+                  }
+                  if (typeof pluginInstance.settingsManager.setCSSVariables === "function") {
+                    pluginInstance.settingsManager.setCSSVariables();
+                  }
+                }
+                if (typeof pluginInstance.loadData === "function" && typeof pluginInstance.settings === "object") {
+                  pluginInstance.settings = Object.assign({}, pluginInstance.settings, await pluginInstance.loadData());
+                }
+              }
               if (typeof plugins.disablePlugin === "function" && typeof plugins.enablePlugin === "function") {
                 await plugins.disablePlugin(pluginId);
                 await plugins.enablePlugin(pluginId);
@@ -2454,15 +2490,19 @@ var SyncClient = class {
                 if (typeof newInstance.loadIconFolderData === "function") {
                   await newInstance.loadIconFolderData();
                 }
+                if (typeof newInstance.handleChangeLayout === "function") {
+                  newInstance.handleChangeLayout();
+                }
                 if (typeof newInstance.loadSettings === "function") {
                   await newInstance.loadSettings();
                 }
-                if (typeof newInstance.handleChangeLayout === "function") {
-                  newInstance.handleChangeLayout();
+                if (typeof newInstance.refresh === "function") {
+                  newInstance.refresh();
                 }
               }
             }
             this.app.workspace.trigger("css-change");
+            this.app.workspace.trigger("layout-change");
             const leaves = this.app.workspace.getLeavesOfType("file-explorer");
             for (const leaf of leaves) {
               const view = leaf.view;
